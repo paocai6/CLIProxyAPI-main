@@ -389,10 +389,11 @@ type ClaudeKey struct {
 	// Cloak configures request cloaking for non-Claude-Code clients.
 	Cloak *CloakConfig `yaml:"cloak,omitempty" json:"cloak,omitempty"`
 
-	// ExperimentalCCHSigning enables opt-in final-body cch signing for cloaked
-	// Claude /v1/messages requests. It is disabled by default so upstream seed
-	// changes do not alter the proxy's legacy behavior.
-	ExperimentalCCHSigning bool `yaml:"experimental-cch-signing,omitempty" json:"experimental-cch-signing,omitempty"`
+	// ExperimentalCCHSigning controls final-body cch signing for cloaked
+	// Claude /v1/messages requests. Default is true (enabled) because the
+	// SHA256-based fallback produces incorrect cch values detectable by Anthropic.
+	// Set to false only if you need legacy SHA256-based cch for compatibility.
+	ExperimentalCCHSigning *bool `yaml:"experimental-cch-signing,omitempty" json:"experimental-cch-signing,omitempty"`
 }
 
 func (k ClaudeKey) GetAPIKey() string  { return k.APIKey }

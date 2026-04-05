@@ -73,9 +73,15 @@ func userIDCacheKey(apiKey string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func CachedUserID(apiKey string) string {
+// CachedUserID returns a stable user_id per apiKey, refreshing the TTL on each access.
+// When accountUUID is provided, it is embedded in newly generated user_ids.
+func CachedUserID(apiKey string, accountUUID ...string) string {
+	acctUUID := ""
+	if len(accountUUID) > 0 {
+		acctUUID = accountUUID[0]
+	}
 	if apiKey == "" {
-		return generateFakeUserID()
+		return generateFakeUserID(acctUUID)
 	}
 
 	userIDCacheCleanupOnce.Do(startUserIDCacheCleanup)
@@ -100,7 +106,7 @@ func CachedUserID(apiKey string) string {
 		userIDCacheMu.Unlock()
 	}
 
-	newID := generateFakeUserID()
+	newID := generateFakeUserID(acctUUID)
 
 	userIDCacheMu.Lock()
 	entry, ok = userIDCache[key]

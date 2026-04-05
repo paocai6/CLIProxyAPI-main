@@ -101,6 +101,8 @@ func (o *CodexAuth) ExchangeCodeForTokensWithRedirect(ctx context.Context, code,
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+	// Set a real Codex CLI User-Agent to avoid exposing Go's default "Go-http-client/1.1".
+	req.Header.Set("User-Agent", "codex-cli-rs/0.118.0")
 
 	resp, err := o.httpClient.Do(req)
 	if err != nil {
@@ -187,6 +189,7 @@ func (o *CodexAuth) RefreshTokens(ctx context.Context, refreshToken string) (*Co
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "codex-cli-rs/0.118.0")
 
 	resp, err := o.httpClient.Do(req)
 	if err != nil {

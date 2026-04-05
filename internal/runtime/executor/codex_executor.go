@@ -652,8 +652,14 @@ func applyCodexHeaders(r *http.Request, auth *cliproxyauth.Auth, token string, s
 	cfgUserAgent, _ := codexHeaderDefaults(cfg, auth)
 	ensureHeaderWithConfigPrecedence(r.Header, ginHeaders, "User-Agent", cfgUserAgent, codexUserAgent)
 
+	// Use a stable session ID per auth/apiKey to match real Codex CLI behavior,
+	// which maintains the same session_id for the lifetime of a CLI process.
 	if strings.Contains(r.Header.Get("User-Agent"), "Mac OS") {
-		misc.EnsureHeader(r.Header, ginHeaders, "Session_id", uuid.NewString())
+		sessionKey := ""
+		if auth != nil {
+			sessionKey = auth.ID
+		}
+		misc.EnsureHeader(r.Header, ginHeaders, "Session_id", helps.CachedSessionID(sessionKey))
 	}
 
 	if stream {

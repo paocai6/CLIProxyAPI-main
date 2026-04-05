@@ -14,13 +14,23 @@ var userIDPattern = regexp.MustCompile(`^user_[a-fA-F0-9]{64}_account_[0-9a-f]{8
 
 // generateFakeUserID generates a fake user ID in Claude Code format.
 // Format: user_[64-hex-chars]_account_[UUID-v4]_session_[UUID-v4]
-func generateFakeUserID() string {
+// When accountUUID is provided, it is used instead of a random UUID to match
+// the real OAuth account, preventing server-side cross-validation failures.
+func generateFakeUserID(accountUUID ...string) string {
 	hexBytes := make([]byte, 32)
 	_, _ = rand.Read(hexBytes)
 	hexPart := hex.EncodeToString(hexBytes)
-	accountUUID := uuid.New().String()
+	acctUUID := uuid.New().String()
+	if len(accountUUID) > 0 && accountUUID[0] != "" {
+		acctUUID = accountUUID[0]
+	}
 	sessionUUID := uuid.New().String()
-	return "user_" + hexPart + "_account_" + accountUUID + "_session_" + sessionUUID
+	return "user_" + hexPart + "_account_" + acctUUID + "_session_" + sessionUUID
+}
+
+// GenerateFakeUserIDWithAccount generates a user ID using the real account UUID.
+func GenerateFakeUserIDWithAccount(accountUUID string) string {
+	return generateFakeUserID(accountUUID)
 }
 
 // isValidUserID checks if a user ID matches Claude Code format.

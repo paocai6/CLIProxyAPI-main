@@ -1303,19 +1303,27 @@ func getCloakConfigFromAuth(auth *cliproxyauth.Auth) (string, bool, []string, bo
 		}
 	}
 
-	cacheUserID := strings.EqualFold(strings.TrimSpace(auth.Attributes["cloak_cache_user_id"]), "true")
+	// Default to true: a real CLI session keeps the same user_id throughout.
+	// Generating a new user_id per request is a detectable anomaly.
+	cacheUserID := true
+	if v := strings.TrimSpace(auth.Attributes["cloak_cache_user_id"]); v != "" {
+		cacheUserID = strings.EqualFold(v, "true")
+	}
 
 	return cloakMode, strictMode, sensitiveWords, cacheUserID
 }
 
 // injectFakeUserID generates and injects a fake user ID into the request metadata.
 // When useCache is false, a new user ID is generated for every call.
-func injectFakeUserID(payload []byte, apiKey string, useCache bool) []byte {
+// accountUUID, when non-empty, is embedded in the generated user_id to match the
+// real OAuth account — this prevents Anthropic from detecting a mismatch between
+// the token's account and the user_id's embedded account UUID.
+func injectFakeUserID(payload []byte, apiKey string, useCache bool, accountUUID string) []byte {
 	generateID := func() string {
 		if useCache {
-			return helps.CachedUserID(apiKey)
+			return helps.CachedUserID(apiKey, accountUUID)
 		}
-		return helps.GenerateFakeUserID()
+		return helps.GenerateFakeUserIDWithAccount(accountUUID)
 	}
 
 	metadata := gjson.GetBytes(payload, "metadata")
@@ -1517,8 +1525,17 @@ func applyCloaking(ctx context.Context, cfg *config.Config, auth *cliproxyauth.A
 	payload = checkSystemInstructionsWithSigningMode(payload, strictMode, useExperimentalCCHSigning, resolveFingerprintSalt(cfg), billingVersion, entrypoint, workload)
 	injectedBlocks := 2 // billing block + agent block
 
-	// Inject fake user ID
-	payload = injectFakeUserID(payload, apiKey, cacheUserID)
+	// Extract account UUID from auth metadata (saved during OAuth token exchange).
+	// This ensures the generated user_id embeds the real account UUID.
+	accountUUID := ""
+	if auth != nil && auth.Metadata != nil {
+		if v, ok := auth.Metadata["account_uuid"].(string); ok {
+			accountUUID = v
+		}
+	}
+
+	// Inject fake user ID with real account UUID for server-side consistency.
+	payload = injectFakeUserID(payload, apiKey, cacheUserID, accountUUID)
 
 	// Apply sensitive word obfuscation.
 	// Skip injected system blocks to avoid corrupting our own control text.

@@ -89,7 +89,17 @@ func resolveClaudeKeyCloakConfig(cfg *config.Config, auth *cliproxyauth.Auth) *c
 	return entry.Cloak
 }
 
+// experimentalCCHSigningEnabled returns true when CCH signing should be applied.
+// Default is true (use the real xxHash64 algorithm) because the SHA256-based
+// fallback produces incorrect cch values that Anthropic can trivially detect.
+// Set experimental-cch-signing: false in ClaudeKey config to disable.
 func experimentalCCHSigningEnabled(cfg *config.Config, auth *cliproxyauth.Auth) bool {
 	entry := resolveClaudeKeyConfig(cfg, auth)
-	return entry != nil && entry.ExperimentalCCHSigning
+	if entry == nil {
+		return true // no matching config — default to signing on
+	}
+	if entry.ExperimentalCCHSigning == nil {
+		return true // not explicitly configured — default to signing on
+	}
+	return *entry.ExperimentalCCHSigning
 }
