@@ -347,6 +347,22 @@ func (s *Service) applyRetryConfig(cfg *config.Config) {
 	}
 	maxInterval := time.Duration(cfg.MaxRetryInterval) * time.Second
 	s.coreManager.SetRetryConfig(cfg.RequestRetry, maxInterval, cfg.MaxRetryCredentials)
+
+	// Apply pacing configuration for per-account request throttling.
+	p := cfg.Pacing
+	maxConc := p.MaxConcurrency
+	if maxConc <= 0 {
+		maxConc = 1
+	}
+	minInterval := time.Duration(p.MinIntervalMs) * time.Millisecond
+	if minInterval <= 0 {
+		minInterval = 2 * time.Second
+	}
+	jitter := time.Duration(p.JitterMs) * time.Millisecond
+	if jitter < 0 {
+		jitter = 3 * time.Second
+	}
+	s.coreManager.ConfigurePacer(maxConc, minInterval, jitter, p.Enable)
 }
 
 func openAICompatInfoFromAuth(a *coreauth.Auth) (providerKey string, compatName string, ok bool) {

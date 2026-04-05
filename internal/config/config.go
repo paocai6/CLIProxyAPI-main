@@ -82,6 +82,9 @@ type Config struct {
 	// Routing controls credential selection behavior.
 	Routing RoutingConfig `yaml:"routing" json:"routing"`
 
+	// Pacing controls per-account request pacing for anti-detection.
+	Pacing PacingConfig `yaml:"pacing,omitempty" json:"pacing,omitempty"`
+
 	// WebsocketAuth enables or disables authentication for the WebSocket API.
 	WebsocketAuth bool `yaml:"ws-auth" json:"ws-auth"`
 
@@ -220,6 +223,23 @@ type RoutingConfig struct {
 	// Strategy selects the credential selection strategy.
 	// Supported values: "round-robin" (default), "fill-first".
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"`
+}
+
+// PacingConfig controls per-account request pacing to simulate real CLI usage patterns.
+// When enabled, the proxy limits concurrent requests per account and enforces minimum
+// intervals between consecutive requests, making each account's traffic look like a
+// single active user rather than a multiplexed proxy.
+type PacingConfig struct {
+	// Enable activates per-account request pacing. Default false (opt-in).
+	Enable bool `yaml:"enable" json:"enable"`
+	// MaxConcurrency is the maximum concurrent in-flight requests per account. Default 1.
+	MaxConcurrency int `yaml:"max-concurrency,omitempty" json:"max-concurrency,omitempty"`
+	// MinIntervalMs is the minimum milliseconds between consecutive requests to the same account.
+	// Default 2000 (2 seconds). Simulates human think-time.
+	MinIntervalMs int `yaml:"min-interval-ms,omitempty" json:"min-interval-ms,omitempty"`
+	// JitterMs is the random jitter in milliseconds added to min-interval.
+	// Default 3000 (3 seconds). Makes intervals 2-5s by default.
+	JitterMs int `yaml:"jitter-ms,omitempty" json:"jitter-ms,omitempty"`
 }
 
 // OAuthModelAlias defines a model ID alias for a specific channel.

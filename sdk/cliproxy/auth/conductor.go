@@ -161,6 +161,9 @@ type Manager struct {
 	// Optional HTTP RoundTripper provider injected by host.
 	rtProvider RoundTripperProvider
 
+	// pacer enforces per-auth request pacing to prevent detection.
+	pacer *authPacer
+
 	// Auto refresh state
 	refreshCancel    context.CancelFunc
 	refreshSemaphore chan struct{}
@@ -182,6 +185,7 @@ func NewManager(store Store, selector Selector, hook Hook) *Manager {
 		auths:            make(map[string]*Auth),
 		providerOffsets:  make(map[string]int),
 		modelPoolOffsets: make(map[string]int),
+		pacer:            newAuthPacer(),
 		refreshSemaphore: make(chan struct{}, refreshMaxConcurrency),
 	}
 	// atomic.Value requires non-nil initial value.
@@ -958,6 +962,15 @@ func (m *Manager) SetRetryConfig(retry int, maxRetryInterval time.Duration, maxR
 	m.maxRetryInterval.Store(maxRetryInterval.Nanoseconds())
 }
 
+// ConfigurePacer updates the per-auth request pacing parameters.
+// This should be called during config initialization and on hot-reload.
+func (m *Manager) ConfigurePacer(maxConcurrency int, minInterval, jitter time.Duration, enabled bool) {
+	if m == nil || m.pacer == nil {
+		return
+	}
+	m.pacer.Configure(maxConcurrency, minInterval, jitter, enabled)
+}
+
 // RegisterExecutor registers a provider executor with the manager.
 func (m *Manager) RegisterExecutor(executor ProviderExecutor) {
 	if executor == nil {
@@ -1104,6 +1117,10 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 		if errWait := waitForCooldown(ctx, wait); errWait != nil {
 			return cliproxyexecutor.Response{}, errWait
 		}
+		// Add random delay after retry to break mechanical rotation pattern.
+		if errPace := m.pacer.AcquirePostRetry(ctx); errPace != nil {
+			return cliproxyexecutor.Response{}, errPace
+		}
 	}
 	if lastErr != nil {
 		return cliproxyexecutor.Response{}, lastErr
@@ -1134,6 +1151,10 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
 		}
 		if errWait := waitForCooldown(ctx, wait); errWait != nil {
 			return cliproxyexecutor.Response{}, errWait
+		}
+		// Add random delay after retry to break mechanical rotation pattern.
+		if errPace := m.pacer.AcquirePostRetry(ctx); errPace != nil {
+			return cliproxyexecutor.Response{}, errPace
 		}
 	}
 	if lastErr != nil {
@@ -1169,6 +1190,9 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 		}
 		if errWait := waitForCooldown(ctx, wait); errWait != nil {
 			return nil, errWait
+		}
+		if errPace := m.pacer.AcquirePostRetry(ctx); errPace != nil {
+			return nil, errPace
 		}
 	}
 	if lastErr != nil {
@@ -1212,8 +1236,15 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			execCtx = context.WithValue(execCtx, "cliproxy.roundtripper", rt)
 		}
 
+		// Acquire per-auth pacing slot (blocks until concurrency + interval allows).
+		release, errPace := m.pacer.Acquire(execCtx, auth.ID)
+		if errPace != nil {
+			return cliproxyexecutor.Response{}, errPace
+		}
+
 		models, pooled := m.preparedExecutionModels(auth, routeModel)
 		if len(models) == 0 {
+			release()
 			continue
 		}
 		attempted[auth.ID] = struct{}{}
@@ -1226,6 +1257,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, Success: errExec == nil}
 			if errExec != nil {
 				if errCtx := execCtx.Err(); errCtx != nil {
+					release()
 					return cliproxyexecutor.Response{}, errCtx
 				}
 				result.Error = &Error{Message: errExec.Error()}
@@ -1237,14 +1269,17 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				}
 				m.MarkResult(execCtx, result)
 				if isRequestInvalidError(errExec) {
+					release()
 					return cliproxyexecutor.Response{}, errExec
 				}
 				authErr = errExec
 				continue
 			}
 			m.MarkResult(execCtx, result)
+			release()
 			return resp, nil
 		}
+		release()
 		if authErr != nil {
 			if isRequestInvalidError(authErr) {
 				return cliproxyexecutor.Response{}, authErr
@@ -1375,13 +1410,22 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			execCtx = context.WithValue(execCtx, roundTripperContextKey{}, rt)
 			execCtx = context.WithValue(execCtx, "cliproxy.roundtripper", rt)
 		}
+
+		// Acquire per-auth pacing slot.
+		release, errPace := m.pacer.Acquire(execCtx, auth.ID)
+		if errPace != nil {
+			return nil, errPace
+		}
+
 		models, pooled := m.preparedExecutionModels(auth, routeModel)
 		if len(models) == 0 {
+			release()
 			continue
 		}
 		attempted[auth.ID] = struct{}{}
 		streamResult, errStream := m.executeStreamWithModelPool(execCtx, executor, auth, provider, req, opts, routeModel, models, pooled)
 		if errStream != nil {
+			release()
 			if errCtx := execCtx.Err(); errCtx != nil {
 				return nil, errCtx
 			}
@@ -1391,6 +1435,11 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			lastErr = errStream
 			continue
 		}
+		// NOTE: For streaming, release is called after the result is consumed
+		// by the downstream. The stream result wraps the release in its closer.
+		// However, since streaming responses hold the connection open, we release
+		// immediately to not block the account for the entire stream duration.
+		release()
 		return streamResult, nil
 	}
 }

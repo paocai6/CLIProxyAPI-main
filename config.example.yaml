@@ -97,6 +97,15 @@ quota-exceeded:
 routing:
   strategy: "round-robin" # round-robin (default), fill-first
 
+# Per-account request pacing for anti-detection.
+# Limits concurrency and enforces minimum intervals per upstream account,
+# making traffic look like real CLI usage (one user, serial requests with think-time).
+# pacing:
+#   enable: true
+#   max-concurrency: 1       # max in-flight requests per account (default 1)
+#   min-interval-ms: 2000    # min ms between requests to same account (default 2000)
+#   jitter-ms: 3000          # random jitter ms added to interval (default 3000, total 2-5s)
+
 # When true, enable authentication for the WebSocket API (/v1/ws).
 ws-auth: false
 
