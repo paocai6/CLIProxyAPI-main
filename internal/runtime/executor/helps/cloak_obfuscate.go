@@ -81,24 +81,41 @@ func (m *SensitiveWordMatcher) obfuscateText(text string) string {
 	return m.regex.ReplaceAllStringFunc(text, obfuscateWord)
 }
 
-// ObfuscateSensitiveWords processes the payload and obfuscates sensitive words
-// in system blocks and message content.
-func ObfuscateSensitiveWords(payload []byte, matcher *SensitiveWordMatcher) []byte {
+// ObfuscateOpts controls which parts of the payload are processed.
+type ObfuscateOpts struct {
+	// SkipSystemPrefix skips the first N system blocks (e.g. 2 to skip billing + agent).
+	SkipSystemPrefix int
+	// IncludeMessages enables obfuscation of message content (default false).
+	IncludeMessages bool
+}
+
+// ObfuscateSensitiveWords processes the payload and obfuscates sensitive words.
+// By default only user system blocks (after the injected prefix) are processed.
+// Pass IncludeMessages=true to also process message content.
+func ObfuscateSensitiveWords(payload []byte, matcher *SensitiveWordMatcher, opts ...ObfuscateOpts) []byte {
 	if matcher == nil || matcher.regex == nil {
 		return payload
 	}
 
-	// Obfuscate in system blocks
-	payload = obfuscateSystemBlocks(payload, matcher)
+	var o ObfuscateOpts
+	if len(opts) > 0 {
+		o = opts[0]
+	}
 
-	// Obfuscate in messages
-	payload = obfuscateMessages(payload, matcher)
+	// Obfuscate in system blocks (skipping injected prefix blocks)
+	payload = obfuscateSystemBlocks(payload, matcher, o.SkipSystemPrefix)
+
+	// Obfuscate in messages only when explicitly requested
+	if o.IncludeMessages {
+		payload = obfuscateMessages(payload, matcher)
+	}
 
 	return payload
 }
 
 // obfuscateSystemBlocks obfuscates sensitive words in system blocks.
-func obfuscateSystemBlocks(payload []byte, matcher *SensitiveWordMatcher) []byte {
+// skipPrefix controls how many leading system blocks to skip (e.g. injected billing/agent blocks).
+func obfuscateSystemBlocks(payload []byte, matcher *SensitiveWordMatcher, skipPrefix int) []byte {
 	system := gjson.GetBytes(payload, "system")
 	if !system.Exists() {
 		return payload
@@ -106,7 +123,13 @@ func obfuscateSystemBlocks(payload []byte, matcher *SensitiveWordMatcher) []byte
 
 	if system.IsArray() {
 		modified := false
+		idx := 0
 		system.ForEach(func(key, value gjson.Result) bool {
+			defer func() { idx++ }()
+			// Skip injected control blocks at the front of the system array.
+			if idx < skipPrefix {
+				return true
+			}
 			if value.Get("type").String() == "text" {
 				text := value.Get("text").String()
 				obfuscated := matcher.obfuscateText(text)

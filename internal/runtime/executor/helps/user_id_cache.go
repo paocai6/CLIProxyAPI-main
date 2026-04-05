@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,10 +19,24 @@ var (
 	userIDCacheCleanupOnce sync.Once
 )
 
+// userIDTTLNanos stores the TTL in nanoseconds for atomic access.
+// Default 24h, increased from 1h to align with device profile lifecycle.
+var userIDTTLNanos = int64(24 * time.Hour)
+
 const (
-	userIDTTL                = time.Hour
 	userIDCacheCleanupPeriod = 15 * time.Minute
 )
+
+// SetUserIDTTL overrides the user_id cache TTL. Use during config initialization.
+func SetUserIDTTL(d time.Duration) {
+	if d > 0 {
+		atomic.StoreInt64(&userIDTTLNanos, int64(d))
+	}
+}
+
+func getUserIDTTL() time.Duration {
+	return time.Duration(atomic.LoadInt64(&userIDTTLNanos))
+}
 
 func startUserIDCacheCleanup() {
 	go func() {
@@ -56,6 +71,7 @@ func CachedUserID(apiKey string) string {
 
 	userIDCacheCleanupOnce.Do(startUserIDCacheCleanup)
 
+	ttl := getUserIDTTL()
 	key := userIDCacheKey(apiKey)
 	now := time.Now()
 
@@ -67,7 +83,7 @@ func CachedUserID(apiKey string) string {
 		userIDCacheMu.Lock()
 		entry = userIDCache[key]
 		if entry.value != "" && entry.expire.After(now) && isValidUserID(entry.value) {
-			entry.expire = now.Add(userIDTTL)
+			entry.expire = now.Add(ttl)
 			userIDCache[key] = entry
 			userIDCacheMu.Unlock()
 			return entry.value
@@ -82,7 +98,7 @@ func CachedUserID(apiKey string) string {
 	if !ok || entry.value == "" || !entry.expire.After(now) || !isValidUserID(entry.value) {
 		entry.value = newID
 	}
-	entry.expire = now.Add(userIDTTL)
+	entry.expire = now.Add(ttl)
 	userIDCache[key] = entry
 	userIDCacheMu.Unlock()
 	return entry.value

@@ -360,12 +360,23 @@ func ApplyClaudeDeviceProfileHeaders(r *http.Request, profile ClaudeDeviceProfil
 
 // DefaultClaudeVersion returns the version string (e.g. "2.1.63") from the
 // current baseline device profile. It extracts the version from the User-Agent.
-func DefaultClaudeVersion(cfg *config.Config) string {
-	profile := defaultClaudeDeviceProfile(cfg)
-	if version, ok := parseClaudeCLIVersion(profile.UserAgent); ok {
-		return strconv.Itoa(version.major) + "." + strconv.Itoa(version.minor) + "." + strconv.Itoa(version.patch)
+// VersionString returns the version string (e.g. "2.1.63") from the device profile.
+// Falls back to the default baseline version if the profile has no parsed version.
+func (p ClaudeDeviceProfile) VersionString() string {
+	if p.hasVersion {
+		return strconv.Itoa(p.version.major) + "." + strconv.Itoa(p.version.minor) + "." + strconv.Itoa(p.version.patch)
 	}
 	return "2.1.63"
+}
+
+// DefaultClaudeDeviceProfilePublic returns the baseline device profile from config.
+// Use this when stabilize-device-profile is disabled and you need the default profile.
+func DefaultClaudeDeviceProfilePublic(cfg *config.Config) ClaudeDeviceProfile {
+	return defaultClaudeDeviceProfile(cfg)
+}
+
+func DefaultClaudeVersion(cfg *config.Config) string {
+	return defaultClaudeDeviceProfile(cfg).VersionString()
 }
 
 func ApplyClaudeLegacyDeviceHeaders(r *http.Request, ginHeaders http.Header, cfg *config.Config) {

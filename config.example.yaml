@@ -194,6 +194,8 @@ nonstream-keepalive-interval: 0
 #   arch: "arm64"
 #   timeout: "600"
 #   stabilize-device-profile: false  # optional, default false; set true to enable per-auth/API-key fingerprint pinning
+#   anthropic-beta: ""  # optional; override the default Anthropic-Beta header. Keep in sync with the configured client version.
+#   session-ttl: "24h"  # optional; controls user_id/session_id reuse lifetime. Default "24h". Use "168h" (7d) to match device profile TTL.
 
 # Default headers for Codex OAuth model requests.
 # These are used only for file-backed/OAuth Codex requests when the client

@@ -50,6 +50,21 @@ func ShouldCloak(cloakMode string, userAgent string) bool {
 	}
 }
 
+// ShouldCloakByAuth determines cloaking based on auth type instead of client UA.
+// This is more reliable than UA-based detection: OAuth tokens indicate a real
+// Claude Code subscription (don't cloak), API keys indicate third-party use (cloak).
+func ShouldCloakByAuth(cloakMode, apiKey string) bool {
+	switch strings.ToLower(cloakMode) {
+	case "always":
+		return true
+	case "never":
+		return false
+	default: // "auto"
+		// OAuth tokens come from real Claude Code subscriptions — don't cloak
+		return !strings.Contains(apiKey, "sk-ant-oat")
+	}
+}
+
 // isClaudeCodeClient checks if the User-Agent indicates a Claude Code client.
 func isClaudeCodeClient(userAgent string) bool {
 	return strings.HasPrefix(userAgent, "claude-cli")

@@ -1811,26 +1811,38 @@ func TestClaudeExecutor_ExperimentalCCHSigningOptInSignsFinalBody(t *testing.T) 
 }
 
 func TestApplyCloaking_PreservesConfiguredStrictModeAndSensitiveWordsWhenModeOmitted(t *testing.T) {
+	obfuscateMessages := true
 	cfg := &config.Config{
 		ClaudeKey: []config.ClaudeKey{{
 			APIKey: "key-123",
 			Cloak: &config.CloakConfig{
-				StrictMode:     true,
-				SensitiveWords: []string{"proxy"},
+				StrictMode:        true,
+				SensitiveWords:    []string{"proxy"},
+				ObfuscateMessages: &obfuscateMessages,
 			},
 		}},
 	}
 	auth := &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "key-123"}}
 	payload := []byte(`{"system":"proxy rules","messages":[{"role":"user","content":[{"type":"text","text":"proxy access"}]}]}`)
 
-	out := applyCloaking(context.Background(), cfg, auth, payload, "claude-3-5-sonnet-20241022", "key-123")
+	out := applyCloaking(context.Background(), cfg, auth, payload, "claude-3-5-sonnet-20241022", "key-123", "2.1.63")
 
 	blocks := gjson.GetBytes(out, "system").Array()
 	if len(blocks) != 2 {
 		t.Fatalf("expected strict mode to keep only injected system blocks, got %d", len(blocks))
 	}
+	// Verify injected control blocks are NOT corrupted by sensitive word obfuscation
+	billingText := blocks[0].Get("text").String()
+	if strings.Contains(billingText, "\u200B") {
+		t.Fatalf("billing header should not be obfuscated, got %q", billingText)
+	}
+	agentText := blocks[1].Get("text").String()
+	if strings.Contains(agentText, "\u200B") {
+		t.Fatalf("agent block should not be obfuscated, got %q", agentText)
+	}
+	// Verify messages ARE obfuscated when ObfuscateMessages is enabled
 	if got := gjson.GetBytes(out, "messages.0.content.0.text").String(); !strings.Contains(got, "\u200B") {
-		t.Fatalf("expected configured sensitive word obfuscation to apply, got %q", got)
+		t.Fatalf("expected configured sensitive word obfuscation to apply to messages, got %q", got)
 	}
 }
 

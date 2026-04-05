@@ -142,6 +142,14 @@ type ClaudeHeaderDefaults struct {
 	Arch                   string `yaml:"arch" json:"arch"`
 	Timeout                string `yaml:"timeout" json:"timeout"`
 	StabilizeDeviceProfile *bool  `yaml:"stabilize-device-profile,omitempty" json:"stabilize-device-profile,omitempty"`
+	// AnthropicBeta overrides the default Anthropic-Beta header value.
+	// This should be kept in sync with the configured client version to avoid
+	// advertising capabilities that the claimed version does not support.
+	AnthropicBeta string `yaml:"anthropic-beta,omitempty" json:"anthropic-beta,omitempty"`
+	// SessionTTL controls how long generated user_id and session_id values are
+	// reused per API key/auth. Accepts Go duration strings (e.g. "24h", "168h").
+	// Default is "24h". Set to match device profile lifetime for consistency.
+	SessionTTL string `yaml:"session-ttl,omitempty" json:"session-ttl,omitempty"`
 }
 
 // CodexHeaderDefaults configures fallback header values injected into Codex
@@ -334,6 +342,12 @@ type CloakConfig struct {
 	// CacheUserID controls whether Claude user_id values are cached per API key.
 	// When false, a fresh random user_id is generated for every request.
 	CacheUserID *bool `yaml:"cache-user-id,omitempty" json:"cache-user-id,omitempty"`
+
+	// ObfuscateMessages controls whether sensitive word obfuscation also applies
+	// to message content (user/assistant messages). Default is false: only user
+	// system blocks are obfuscated. Injected control blocks (billing header,
+	// agent identifier) are never obfuscated regardless of this setting.
+	ObfuscateMessages *bool `yaml:"obfuscate-messages,omitempty" json:"obfuscate-messages,omitempty"`
 }
 
 // ClaudeKey represents the configuration for a Claude API key,
@@ -767,6 +781,7 @@ func (cfg *Config) SanitizeClaudeHeaderDefaults() {
 	cfg.ClaudeHeaderDefaults.OS = strings.TrimSpace(cfg.ClaudeHeaderDefaults.OS)
 	cfg.ClaudeHeaderDefaults.Arch = strings.TrimSpace(cfg.ClaudeHeaderDefaults.Arch)
 	cfg.ClaudeHeaderDefaults.Timeout = strings.TrimSpace(cfg.ClaudeHeaderDefaults.Timeout)
+	cfg.ClaudeHeaderDefaults.AnthropicBeta = strings.TrimSpace(cfg.ClaudeHeaderDefaults.AnthropicBeta)
 }
 
 // SanitizeOAuthModelAlias normalizes and deduplicates global OAuth model name aliases.

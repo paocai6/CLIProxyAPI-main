@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,10 +21,24 @@ var (
 	sessionIDCacheCleanupOnce sync.Once
 )
 
+// sessionIDTTLNanos stores the TTL in nanoseconds for atomic access.
+// Default 24h, increased from 1h to align with device profile lifecycle.
+var sessionIDTTLNanos = int64(24 * time.Hour)
+
 const (
-	sessionIDTTL                = time.Hour
 	sessionIDCacheCleanupPeriod = 15 * time.Minute
 )
+
+// SetSessionIDTTL overrides the session_id cache TTL. Use during config initialization.
+func SetSessionIDTTL(d time.Duration) {
+	if d > 0 {
+		atomic.StoreInt64(&sessionIDTTLNanos, int64(d))
+	}
+}
+
+func getSessionIDTTL() time.Duration {
+	return time.Duration(atomic.LoadInt64(&sessionIDTTLNanos))
+}
 
 func startSessionIDCacheCleanup() {
 	go func() {
@@ -59,6 +74,7 @@ func CachedSessionID(apiKey string) string {
 
 	sessionIDCacheCleanupOnce.Do(startSessionIDCacheCleanup)
 
+	ttl := getSessionIDTTL()
 	key := sessionIDCacheKey(apiKey)
 	now := time.Now()
 
@@ -70,7 +86,7 @@ func CachedSessionID(apiKey string) string {
 		sessionIDCacheMu.Lock()
 		entry = sessionIDCache[key]
 		if entry.value != "" && entry.expire.After(now) {
-			entry.expire = now.Add(sessionIDTTL)
+			entry.expire = now.Add(ttl)
 			sessionIDCache[key] = entry
 			sessionIDCacheMu.Unlock()
 			return entry.value
@@ -85,7 +101,7 @@ func CachedSessionID(apiKey string) string {
 	if !ok || entry.value == "" || !entry.expire.After(now) {
 		entry.value = newID
 	}
-	entry.expire = now.Add(sessionIDTTL)
+	entry.expire = now.Add(ttl)
 	sessionIDCache[key] = entry
 	sessionIDCacheMu.Unlock()
 	return entry.value
