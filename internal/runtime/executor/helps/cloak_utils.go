@@ -61,7 +61,7 @@ func ShouldCloakByAuth(cloakMode, apiKey string) bool {
 		return false
 	default: // "auto"
 		// OAuth tokens come from real Claude Code subscriptions — don't cloak
-		return !strings.Contains(apiKey, "sk-ant-oat")
+		return !strings.HasPrefix(apiKey, "sk-ant-oat")
 	}
 }
 

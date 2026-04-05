@@ -13,6 +13,8 @@ import (
 	"io"
 	"net/http"
 	"net/textproto"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -58,6 +60,10 @@ func NewClaudeExecutor(cfg *config.Config) *ClaudeExecutor {
 		if d, err := time.ParseDuration(cfg.ClaudeHeaderDefaults.SessionTTL); err == nil {
 			helps.SetUserIDTTL(d)
 			helps.SetSessionIDTTL(d)
+		} else {
+			log.Warnf("invalid session-ttl %q: %v; resetting to default", cfg.ClaudeHeaderDefaults.SessionTTL, err)
+			helps.ResetUserIDTTL()
+			helps.ResetSessionIDTTL()
 		}
 	} else {
 		helps.ResetUserIDTTL()
@@ -146,7 +152,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 
 	// Only apply cloaking when targeting Anthropic's own API.
 	// Non-Anthropic upstreams would reject or misinterpret the injected billing headers.
-	if isAnthropicFirstParty(baseURL, apiKey) {
+	if isAnthropicFirstParty(baseURL) {
 		body = applyCloaking(ctx, e.cfg, auth, body, baseModel, apiKey, profile.VersionString())
 	}
 
@@ -321,7 +327,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	profile := resolveDeviceProfile(ctx, auth, apiKey, e.cfg)
 
 	// Only apply cloaking when targeting Anthropic's own API.
-	if isAnthropicFirstParty(baseURL, apiKey) {
+	if isAnthropicFirstParty(baseURL) {
 		body = applyCloaking(ctx, e.cfg, auth, body, baseModel, apiKey, profile.VersionString())
 	}
 
@@ -511,7 +517,7 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Aut
 	// Resolve device profile for consistent version in system instructions and headers.
 	profile := resolveDeviceProfile(ctx, auth, apiKey, e.cfg)
 
-	if isAnthropicFirstParty(baseURL, apiKey) && !strings.HasPrefix(baseModel, "claude-3-5-haiku") {
+	if isAnthropicFirstParty(baseURL) && !strings.HasPrefix(baseModel, "claude-3-5-haiku") {
 		body = checkSystemInstructionsWithSigningMode(body, false, false, profile.VersionString(), "", "")
 	}
 
@@ -827,7 +833,7 @@ func decodeResponseBody(body io.ReadCloser, contentEncoding string) (io.ReadClos
 	return body, nil
 }
 
-func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string, stream bool, extraBetas []string, cfg *config.Config, resolvedProfile ...helps.ClaudeDeviceProfile) {
+func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string, stream bool, extraBetas []string, cfg *config.Config, profile helps.ClaudeDeviceProfile) {
 	hdrDefault := func(cfgVal, fallback string) string {
 		if cfgVal != "" {
 			return cfgVal
@@ -852,12 +858,7 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 
 	ginHeaders := getGinHeaders(r.Context())
 	stabilizeDeviceProfile := helps.ClaudeDeviceProfileStabilizationEnabled(cfg)
-	var deviceProfile helps.ClaudeDeviceProfile
-	if len(resolvedProfile) > 0 {
-		deviceProfile = resolvedProfile[0]
-	} else if stabilizeDeviceProfile {
-		deviceProfile = helps.ResolveClaudeDeviceProfile(auth, apiKey, ginHeaders, cfg)
-	}
+	deviceProfile := profile
 
 	baseBetas := defaultClaudeBetas(cfg)
 	if val := strings.TrimSpace(ginHeaders.Get("Anthropic-Beta")); val != "" {
@@ -961,41 +962,31 @@ func claudeCreds(a *cliproxyauth.Auth) (apiKey, baseURL string) {
 	return
 }
 
-func checkSystemInstructions(payload []byte) []byte {
-	return checkSystemInstructionsWithSigningMode(payload, false, false, "2.1.63", "", "")
-}
-
 // isAnthropicFirstParty returns true when the request targets Anthropic's own API.
-// Both OAuth tokens and API keys are checked against the base URL; an OAuth token
-// with an explicit non-Anthropic base_url (e.g. a relay) is treated as third-party.
-func isAnthropicFirstParty(baseURL, apiKey string) bool {
+// The decision is based solely on the base URL. OAuth tokens with a custom
+// non-Anthropic base_url (e.g. a relay) are treated as third-party.
+func isAnthropicFirstParty(baseURL string) bool {
 	return isAnthropicHost(baseURL)
 }
 
 // isAnthropicHost checks whether the base URL points to Anthropic's domain.
 // Empty URL is treated as first-party (defaults to api.anthropic.com).
+// Malformed URLs are treated as non-Anthropic (fail closed).
 func isAnthropicHost(baseURL string) bool {
-	u := strings.TrimSpace(strings.ToLower(baseURL))
+	u := strings.TrimSpace(baseURL)
 	if u == "" {
 		return true // default base URL is api.anthropic.com
 	}
-	// Extract hostname for proper domain boundary matching.
-	// This avoids matching look-alike domains like "evil-anthropic.com".
-	host := u
-	if idx := strings.Index(u, "://"); idx >= 0 {
-		host = u[idx+3:]
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Hostname() == "" {
+		return false // malformed URL — fail closed, do not inject cloaking
 	}
-	if idx := strings.IndexByte(host, '/'); idx >= 0 {
-		host = host[:idx]
-	}
-	if idx := strings.IndexByte(host, ':'); idx >= 0 {
-		host = host[:idx]
-	}
+	host := strings.ToLower(parsed.Hostname())
 	return host == "api.anthropic.com" || host == "anthropic.com" || strings.HasSuffix(host, ".anthropic.com")
 }
 
 func isClaudeOAuthToken(apiKey string) bool {
-	return strings.Contains(apiKey, "sk-ant-oat")
+	return strings.HasPrefix(apiKey, "sk-ant-oat")
 }
 
 // defaultClaudeBetasFallback is the built-in fallback beta string.
@@ -1199,11 +1190,12 @@ func getClientUserAgent(ctx context.Context) string {
 }
 
 // getGinHeaders extracts the incoming request headers from the gin context.
+// Returns an empty (non-nil) Header when the context is unavailable.
 func getGinHeaders(ctx context.Context) http.Header {
 	if ginCtx, ok := ctx.Value("gin").(*gin.Context); ok && ginCtx != nil && ginCtx.Request != nil {
 		return ginCtx.Request.Header
 	}
-	return nil
+	return http.Header{}
 }
 
 // resolveDeviceProfile resolves the device profile for the current request.
@@ -1250,10 +1242,17 @@ func parseEntrypointFromUA(userAgent string) string {
 	return "cli"
 }
 
+// workloadPattern validates workload identifiers: alphanumeric, hyphens, underscores, max 64 chars.
+var workloadPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+
 // getWorkloadFromContext extracts workload identifier from the gin request headers.
+// The value is validated against a strict pattern to prevent injection into billing headers.
 func getWorkloadFromContext(ctx context.Context) string {
 	if ginCtx, ok := ctx.Value("gin").(*gin.Context); ok && ginCtx != nil && ginCtx.Request != nil {
-		return strings.TrimSpace(ginCtx.GetHeader("X-CPA-Claude-Workload"))
+		w := strings.TrimSpace(ginCtx.GetHeader("X-CPA-Claude-Workload"))
+		if w != "" && workloadPattern.MatchString(w) {
+			return w
+		}
 	}
 	return ""
 }
@@ -1380,7 +1379,9 @@ func checkSystemInstructionsWithSigningMode(payload []byte, strictMode bool, exp
 	}
 
 	billingText := generateBillingHeader(payload, experimentalCCHSigning, version, messageText, entrypoint, workload)
-	billingBlock := fmt.Sprintf(`{"type":"text","text":"%s"}`, billingText)
+	// Use sjson to safely construct JSON, preventing injection via crafted billing text.
+	billingBlockBytes, _ := sjson.SetBytes([]byte(`{"type":"text"}`), "text", billingText)
+	billingBlock := string(billingBlockBytes)
 	// No cache_control on the agent block. It is a cloaking artifact with zero cache
 	// value (the last system block is what actually triggers caching of all system content).
 	// Including any cache_control here creates an intra-system TTL ordering violation
@@ -1475,20 +1476,22 @@ func applyCloaking(ctx context.Context, cfg *config.Config, auth *cliproxyauth.A
 		}
 	}
 
-	// Skip system instructions for claude-3-5-haiku models
+	// Inject system instructions (billing header + agent block) for non-haiku models.
+	// Track how many blocks were injected so obfuscation can skip them.
+	injectedBlocks := 0
 	if !strings.HasPrefix(model, "claude-3-5-haiku") {
 		entrypoint := parseEntrypointFromUA(clientUserAgent)
 		workload := getWorkloadFromContext(ctx)
 		payload = checkSystemInstructionsWithSigningMode(payload, strictMode, useExperimentalCCHSigning, billingVersion, entrypoint, workload)
+		injectedBlocks = 2 // billing block + agent block
 	}
 
 	// Inject fake user ID
 	payload = injectFakeUserID(payload, apiKey, cacheUserID)
 
 	// Apply sensitive word obfuscation.
-	// Skip the 2 injected system blocks (billing header + agent identifier)
-	// to avoid corrupting our own control text. Only process messages when
-	// explicitly opted in via obfuscate-messages config.
+	// Skip injected system blocks to avoid corrupting our own control text.
+	// Only process messages when explicitly opted in via obfuscate-messages config.
 	if len(sensitiveWords) > 0 {
 		obfuscateMessages := false
 		if cloakCfg != nil && cloakCfg.ObfuscateMessages != nil {
@@ -1496,7 +1499,7 @@ func applyCloaking(ctx context.Context, cfg *config.Config, auth *cliproxyauth.A
 		}
 		matcher := helps.BuildSensitiveWordMatcher(sensitiveWords)
 		payload = helps.ObfuscateSensitiveWords(payload, matcher, helps.ObfuscateOpts{
-			SkipSystemPrefix: 2, // billing block + agent block
+			SkipSystemPrefix: injectedBlocks,
 			IncludeMessages:  obfuscateMessages,
 		})
 	}
