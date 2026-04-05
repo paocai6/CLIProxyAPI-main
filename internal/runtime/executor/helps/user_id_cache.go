@@ -27,11 +27,20 @@ const (
 	userIDCacheCleanupPeriod = 15 * time.Minute
 )
 
+// defaultUserIDTTL is the compiled-in default, used by ResetUserIDTTL.
+const defaultUserIDTTL = 24 * time.Hour
+
 // SetUserIDTTL overrides the user_id cache TTL. Use during config initialization.
 func SetUserIDTTL(d time.Duration) {
 	if d > 0 {
 		atomic.StoreInt64(&userIDTTLNanos, int64(d))
 	}
+}
+
+// ResetUserIDTTL restores the TTL to the compiled-in default (24h).
+// Called on hot-reload when session-ttl is removed from config.
+func ResetUserIDTTL() {
+	atomic.StoreInt64(&userIDTTLNanos, int64(defaultUserIDTTL))
 }
 
 func getUserIDTTL() time.Duration {

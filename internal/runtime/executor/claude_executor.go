@@ -51,13 +51,17 @@ const claudeToolPrefix = ""
 const defaultModelMaxTokens = 1024
 
 func NewClaudeExecutor(cfg *config.Config) *ClaudeExecutor {
-	// Apply session TTL from config to align user_id/session_id lifecycle
-	// with the device profile cache (default 24h, configurable).
+	// Always reconcile session TTL with config: if session-ttl is set, use it;
+	// otherwise reset to the compiled-in default (24h). This ensures hot-reloads
+	// that remove session-ttl don't leave a stale value in the global atomic.
 	if cfg != nil && cfg.ClaudeHeaderDefaults.SessionTTL != "" {
 		if d, err := time.ParseDuration(cfg.ClaudeHeaderDefaults.SessionTTL); err == nil {
 			helps.SetUserIDTTL(d)
 			helps.SetSessionIDTTL(d)
 		}
+	} else {
+		helps.ResetUserIDTTL()
+		helps.ResetSessionIDTTL()
 	}
 	return &ClaudeExecutor{cfg: cfg}
 }
@@ -962,11 +966,15 @@ func checkSystemInstructions(payload []byte) []byte {
 }
 
 // isAnthropicFirstParty returns true when the request targets Anthropic's own API.
-// OAuth tokens always target Anthropic; for API keys we check the base URL hostname.
+// Both OAuth tokens and API keys are checked against the base URL; an OAuth token
+// with an explicit non-Anthropic base_url (e.g. a relay) is treated as third-party.
 func isAnthropicFirstParty(baseURL, apiKey string) bool {
-	if isClaudeOAuthToken(apiKey) {
-		return true
-	}
+	return isAnthropicHost(baseURL)
+}
+
+// isAnthropicHost checks whether the base URL points to Anthropic's domain.
+// Empty URL is treated as first-party (defaults to api.anthropic.com).
+func isAnthropicHost(baseURL string) bool {
 	u := strings.TrimSpace(strings.ToLower(baseURL))
 	if u == "" {
 		return true // default base URL is api.anthropic.com
@@ -1213,8 +1221,14 @@ func resolveDeviceProfile(ctx context.Context, auth *cliproxyauth.Auth, apiKey s
 // parseEntrypointFromUA extracts the entrypoint from a Claude Code User-Agent.
 // Format: "claude-cli/x.y.z (external, cli)" → "cli"
 // Format: "claude-cli/x.y.z (external, vscode)" → "vscode"
-// Returns "cli" if parsing fails or UA is not Claude Code.
+// Returns "cli" if the UA is not a real Claude Code client or parsing fails.
+// This prevents arbitrary UAs from injecting custom entrypoint values into
+// the billing header.
 func parseEntrypointFromUA(userAgent string) string {
+	// Only parse entrypoint from genuine Claude Code UAs.
+	if !strings.HasPrefix(userAgent, "claude-cli/") {
+		return "cli"
+	}
 	// Find content inside parentheses
 	start := strings.Index(userAgent, "(")
 	end := strings.LastIndex(userAgent, ")")
@@ -1227,7 +1241,9 @@ func parseEntrypointFromUA(userAgent string) string {
 	parts := strings.Split(inner, ",")
 	if len(parts) >= 2 {
 		ep := strings.TrimSpace(parts[1])
-		if ep != "" {
+		// Only accept known entrypoint values to prevent injection.
+		switch ep {
+		case "cli", "vscode", "jetbrains", "sdk-cli", "web", "desktop":
 			return ep
 		}
 	}
