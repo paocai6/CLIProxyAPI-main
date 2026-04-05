@@ -359,7 +359,7 @@ func (s *Service) applyRetryConfig(cfg *config.Config) {
 		minInterval = 2 * time.Second
 	}
 	jitter := time.Duration(p.JitterMs) * time.Millisecond
-	if jitter < 0 {
+	if jitter <= 0 {
 		jitter = 3 * time.Second
 	}
 	s.coreManager.ConfigurePacer(maxConc, minInterval, jitter, p.Enable)

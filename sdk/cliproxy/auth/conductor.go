@@ -1325,8 +1325,15 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			execCtx = context.WithValue(execCtx, "cliproxy.roundtripper", rt)
 		}
 
+		// Acquire per-auth pacing slot (same as executeMixedOnce).
+		release, errPace := m.pacer.Acquire(execCtx, auth.ID)
+		if errPace != nil {
+			return cliproxyexecutor.Response{}, errPace
+		}
+
 		models, pooled := m.preparedExecutionModels(auth, routeModel)
 		if len(models) == 0 {
+			release()
 			continue
 		}
 		attempted[auth.ID] = struct{}{}
@@ -1339,6 +1346,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, Success: errExec == nil}
 			if errExec != nil {
 				if errCtx := execCtx.Err(); errCtx != nil {
+					release()
 					return cliproxyexecutor.Response{}, errCtx
 				}
 				result.Error = &Error{Message: errExec.Error()}
@@ -1350,14 +1358,17 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 				}
 				m.MarkResult(execCtx, result)
 				if isRequestInvalidError(errExec) {
+					release()
 					return cliproxyexecutor.Response{}, errExec
 				}
 				authErr = errExec
 				continue
 			}
 			m.MarkResult(execCtx, result)
+			release()
 			return resp, nil
 		}
+		release()
 		if authErr != nil {
 			if isRequestInvalidError(authErr) {
 				return cliproxyexecutor.Response{}, authErr
@@ -1435,11 +1446,20 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			lastErr = errStream
 			continue
 		}
-		// NOTE: For streaming, release is called after the result is consumed
-		// by the downstream. The stream result wraps the release in its closer.
-		// However, since streaming responses hold the connection open, we release
-		// immediately to not block the account for the entire stream duration.
-		release()
+		// Hold the pacing slot for the duration of the stream. The slot is released
+		// when the chunks channel is fully drained (stream completes or errors).
+		// This ensures max-concurrency=1 is enforced even during long streaming
+		// responses, matching real CLI behavior where a user can't send a new
+		// request while a stream is in progress.
+		wrappedChunks := make(chan cliproxyexecutor.StreamChunk, 1)
+		go func() {
+			defer release()
+			defer close(wrappedChunks)
+			for chunk := range streamResult.Chunks {
+				wrappedChunks <- chunk
+			}
+		}()
+		streamResult.Chunks = wrappedChunks
 		return streamResult, nil
 	}
 }

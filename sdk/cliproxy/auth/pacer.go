@@ -23,20 +23,19 @@ type authPacer struct {
 	slots map[string]*authSlot
 
 	// Configurable parameters (atomic for hot-reload safety).
-	maxConcurrency int32         // max in-flight per auth (default 1)
-	minIntervalNs  int64         // min nanoseconds between requests to same auth
-	jitterNs       int64         // random jitter added to interval
-	enabled        int32         // 1 = enabled, 0 = disabled
+	maxConcurrency int32 // max in-flight per auth (default 1)
+	minIntervalNs  int64 // min nanoseconds between requests to same auth
+	jitterNs       int64 // random jitter added to interval
+	enabled        int32 // 1 = enabled, 0 = disabled
 }
 
 // authSlot tracks per-auth pacing state.
 type authSlot struct {
 	mu          sync.Mutex
-	sem         chan struct{}  // concurrency semaphore
-	lastRelease time.Time     // when the last request finished
+	sem         chan struct{} // concurrency semaphore
+	lastRelease time.Time    // when the last request finished
 }
 
-// defaultPacerConfig returns the default pacer with conservative limits.
 func newAuthPacer() *authPacer {
 	return &authPacer{
 		slots:          make(map[string]*authSlot),
@@ -48,6 +47,9 @@ func newAuthPacer() *authPacer {
 }
 
 // Configure updates pacer parameters. Safe for concurrent use.
+// NOTE: maxConcurrency changes only apply to newly created slots. Existing slots
+// keep their old semaphore capacity until the process restarts or the slot is
+// recreated. This avoids goroutine leaks from replacing channels mid-flight.
 func (p *authPacer) Configure(maxConcurrency int, minInterval, jitter time.Duration, enabled bool) {
 	if maxConcurrency < 1 {
 		maxConcurrency = 1
@@ -60,17 +62,9 @@ func (p *authPacer) Configure(maxConcurrency int, minInterval, jitter time.Durat
 	} else {
 		atomic.StoreInt32(&p.enabled, 0)
 	}
-
-	// Rebuild semaphores for new concurrency limit.
-	p.mu.Lock()
-	for _, slot := range p.slots {
-		slot.mu.Lock()
-		if cap(slot.sem) != maxConcurrency {
-			slot.sem = make(chan struct{}, maxConcurrency)
-		}
-		slot.mu.Unlock()
-	}
-	p.mu.Unlock()
+	// Semaphore channels are NOT replaced for existing slots to avoid leaking
+	// goroutines that are blocked on or hold references to the old channel.
+	// New slots created after this call will use the updated maxConcurrency.
 }
 
 // IsEnabled returns whether pacing is active.
@@ -93,12 +87,26 @@ func (p *authPacer) getSlot(authID string) *authSlot {
 	return slot
 }
 
+// RemoveSlot cleans up the pacing slot for a removed auth.
+// Call this when an account is deregistered to prevent unbounded map growth.
+func (p *authPacer) RemoveSlot(authID string) {
+	p.mu.Lock()
+	delete(p.slots, authID)
+	p.mu.Unlock()
+}
+
 // Acquire blocks until the auth slot is available or ctx is cancelled.
-// Returns a release function that MUST be called when the request completes.
-// If pacing is disabled, returns immediately with a no-op release.
+// Returns a release function that MUST be called exactly once when the request
+// completes (including when the response stream finishes).
+// If pacing is disabled or authID is empty, returns immediately with a no-op release.
 func (p *authPacer) Acquire(ctx context.Context, authID string) (release func(), err error) {
+	noop := func() {}
 	if !p.IsEnabled() {
-		return func() {}, nil
+		return noop, nil
+	}
+	// Skip pacing for empty auth IDs to avoid coalescing unrelated accounts.
+	if authID == "" {
+		return noop, nil
 	}
 
 	slot := p.getSlot(authID)
@@ -125,20 +133,26 @@ func (p *authPacer) Acquire(ctx context.Context, authID string) (release func(),
 
 	if elapsed < target && !slot.lastRelease.IsZero() {
 		wait := target - elapsed
+		timer := time.NewTimer(wait)
 		select {
-		case <-time.After(wait):
+		case <-timer.C:
 		case <-ctx.Done():
+			timer.Stop()
 			// Release concurrency slot on cancel.
 			<-slot.sem
 			return nil, ctx.Err()
 		}
 	}
 
+	// Guard against double-release with sync.Once.
+	var once sync.Once
 	release = func() {
-		slot.mu.Lock()
-		slot.lastRelease = time.Now()
-		slot.mu.Unlock()
-		<-slot.sem
+		once.Do(func() {
+			slot.mu.Lock()
+			slot.lastRelease = time.Now()
+			slot.mu.Unlock()
+			<-slot.sem
+		})
 	}
 	return release, nil
 }
@@ -152,10 +166,12 @@ func (p *authPacer) AcquirePostRetry(ctx context.Context) error {
 	}
 	// Random delay 3-15 seconds to break mechanical rotation pattern.
 	delay := 3*time.Second + time.Duration(rand.Int63n(int64(12*time.Second)))
+	timer := time.NewTimer(delay)
 	select {
-	case <-time.After(delay):
+	case <-timer.C:
 		return nil
 	case <-ctx.Done():
+		timer.Stop()
 		return ctx.Err()
 	}
 }
