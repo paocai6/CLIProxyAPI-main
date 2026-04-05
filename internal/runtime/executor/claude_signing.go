@@ -12,11 +12,25 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const claudeCCHSeed uint64 = 0x6E52736AC806831E
+// defaultClaudeCCHSeed is the xxHash64 seed from Claude Code 2.1.63.
+// Configurable via claude-header-defaults.cch-seed for when Anthropic rotates it.
+const defaultClaudeCCHSeed uint64 = 0x6E52736AC806831E
 
 var claudeBillingHeaderCCHPattern = regexp.MustCompile(`\bcch=([0-9a-f]{5});`)
 
-func signAnthropicMessagesBody(body []byte) []byte {
+// resolveCCHSeed returns the configured seed or the compiled-in default.
+func resolveCCHSeed(cfg *config.Config) uint64 {
+	if cfg != nil && cfg.ClaudeHeaderDefaults.CCHSeed != "" {
+		if n, err := fmt.Sscanf(cfg.ClaudeHeaderDefaults.CCHSeed, "%x", new(uint64)); n == 1 && err == nil {
+			var seed uint64
+			fmt.Sscanf(cfg.ClaudeHeaderDefaults.CCHSeed, "%x", &seed)
+			return seed
+		}
+	}
+	return defaultClaudeCCHSeed
+}
+
+func signAnthropicMessagesBody(body []byte, seed uint64) []byte {
 	billingHeader := gjson.GetBytes(body, "system.0.text").String()
 	if !strings.HasPrefix(billingHeader, "x-anthropic-billing-header:") {
 		return body
@@ -31,7 +45,7 @@ func signAnthropicMessagesBody(body []byte) []byte {
 		return body
 	}
 
-	cch := fmt.Sprintf("%05x", xxHash64.Checksum(unsignedBody, claudeCCHSeed)&0xFFFFF)
+	cch := fmt.Sprintf("%05x", xxHash64.Checksum(unsignedBody, seed)&0xFFFFF)
 	signedBillingHeader := claudeBillingHeaderCCHPattern.ReplaceAllString(unsignedBillingHeader, "cch="+cch+";")
 	signedBody, err := sjson.SetBytes(unsignedBody, "system.0.text", signedBillingHeader)
 	if err != nil {

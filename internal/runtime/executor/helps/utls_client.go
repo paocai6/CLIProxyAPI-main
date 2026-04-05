@@ -85,6 +85,11 @@ func (t *utlsRoundTripper) createConnection(host, addr string) (*http2.ClientCon
 	}
 
 	tlsConfig := &tls.Config{ServerName: host}
+	// NOTE: HelloChrome_Auto simulates Chrome's TLS fingerprint, not Node.js/OpenSSL
+	// which real Claude Code uses. A JA3/JA4 fingerprint analysis can distinguish these.
+	// uTLS does not provide a Node.js/OpenSSL profile; Chrome is the closest available
+	// approximation. A custom ClientHelloSpec matching Node.js would be ideal but requires
+	// continuous maintenance as Node.js updates its OpenSSL dependency.
 	tlsConn := tls.UClient(conn, tlsConfig, tls.HelloChrome_Auto)
 
 	if err := tlsConn.Handshake(); err != nil {
@@ -128,9 +133,15 @@ func (t *utlsRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 	return resp, nil
 }
 
-// anthropicHosts contains the hosts that should use utls Chrome TLS fingerprint.
+// anthropicHosts contains the hosts that should use utls TLS fingerprint.
+// Includes known Anthropic API domains to ensure consistent TLS behavior
+// even if Anthropic migrates to a different subdomain.
 var anthropicHosts = map[string]struct{}{
-	"api.anthropic.com": {},
+	"api.anthropic.com":        {},
+	"anthropic.com":            {},
+	"claude.anthropic.com":     {},
+	"api.claude.ai":            {},
+	"console.anthropic.com":    {},
 }
 
 // fallbackRoundTripper uses utls for Anthropic HTTPS hosts and falls back to

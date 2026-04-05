@@ -187,7 +187,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 		bodyForUpstream = applyClaudeToolPrefix(body, claudeToolPrefix)
 	}
 	if experimentalCCHSigningEnabled(e.cfg, auth) {
-		bodyForUpstream = signAnthropicMessagesBody(bodyForUpstream)
+		bodyForUpstream = signAnthropicMessagesBody(bodyForUpstream, resolveCCHSeed(e.cfg))
 	}
 
 	url := fmt.Sprintf("%s/v1/messages?beta=true", baseURL)
@@ -196,6 +196,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 		return resp, err
 	}
 	applyClaudeHeaders(httpReq, auth, apiKey, false, extraBetas, e.cfg, profile)
+	applyRetryCount(httpReq, opts)
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
 		authID = auth.ID
@@ -359,7 +360,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		bodyForUpstream = applyClaudeToolPrefix(body, claudeToolPrefix)
 	}
 	if experimentalCCHSigningEnabled(e.cfg, auth) {
-		bodyForUpstream = signAnthropicMessagesBody(bodyForUpstream)
+		bodyForUpstream = signAnthropicMessagesBody(bodyForUpstream, resolveCCHSeed(e.cfg))
 	}
 
 	url := fmt.Sprintf("%s/v1/messages?beta=true", baseURL)
@@ -368,6 +369,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		return nil, err
 	}
 	applyClaudeHeaders(httpReq, auth, apiKey, true, extraBetas, e.cfg, profile)
+	applyRetryCount(httpReq, opts)
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
 		authID = auth.ID
@@ -518,7 +520,7 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Aut
 	profile := resolveDeviceProfile(ctx, auth, apiKey, e.cfg)
 
 	if isAnthropicFirstParty(baseURL) && !strings.HasPrefix(baseModel, "claude-3-5-haiku") {
-		body = checkSystemInstructionsWithSigningMode(body, false, false, profile.VersionString(), "", "")
+		body = checkSystemInstructionsWithSigningMode(body, false, false, resolveFingerprintSalt(e.cfg), profile.VersionString(), "", "")
 	}
 
 	// Keep count_tokens requests compatible with Anthropic cache-control constraints too.
@@ -538,6 +540,7 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Aut
 		return cliproxyexecutor.Response{}, err
 	}
 	applyClaudeHeaders(httpReq, auth, apiKey, false, extraBetas, e.cfg, profile)
+	applyRetryCount(httpReq, opts)
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
 		authID = auth.ID
@@ -898,8 +901,11 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 	r.Header.Set("Anthropic-Beta", baseBetas)
 
 	misc.EnsureHeader(r.Header, ginHeaders, "Anthropic-Version", "2023-06-01")
-	// Only set browser access header for API key mode; real Claude Code CLI does not send it.
-	if useAPIKey {
+	// Only set browser access header for API key mode targeting non-Anthropic upstreams.
+	// When cloaking is active (API key → Anthropic first-party), this header must NOT be
+	// sent because real Claude Code (OAuth) never sends it — its presence would betray
+	// that the request originates from an API key client, not the official CLI.
+	if useAPIKey && !isAnthropicBase {
 		misc.EnsureHeader(r.Header, ginHeaders, "Anthropic-Dangerous-Direct-Browser-Access", "true")
 	}
 	misc.EnsureHeader(r.Header, ginHeaders, "X-App", "cli")
@@ -990,6 +996,10 @@ func isClaudeOAuthToken(apiKey string) bool {
 }
 
 // defaultClaudeBetasFallback is the built-in fallback beta string.
+// IMPORTANT: This list MUST stay in sync with the baseline version in
+// claude_device_profile.go (defaultClaudeFingerprintUserAgent). When updating
+// the version, also update these betas to match what that version supports.
+// Use the anthropic-beta config field to override without code changes.
 const defaultClaudeBetasFallback = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,structured-outputs-2025-12-15,fast-mode-2026-02-01,redact-thinking-2026-02-12,token-efficient-tools-2026-03-28"
 
 // defaultClaudeBetas returns the configured Anthropic-Beta header value,
@@ -1189,6 +1199,20 @@ func getClientUserAgent(ctx context.Context) string {
 	return ""
 }
 
+// applyRetryCount overrides X-Stainless-Retry-Count with the actual attempt number
+// from the conductor retry loop, matching real Claude Code behavior where retries
+// increment the counter (0, 1, 2...) instead of always sending "0".
+func applyRetryCount(r *http.Request, opts cliproxyexecutor.Options) {
+	if r == nil || opts.Metadata == nil {
+		return
+	}
+	if attempt, ok := opts.Metadata["retry_attempt"]; ok {
+		if n, ok := attempt.(int); ok && n > 0 {
+			r.Header.Set("X-Stainless-Retry-Count", fmt.Sprintf("%d", n))
+		}
+	}
+}
+
 // getGinHeaders extracts the incoming request headers from the gin context.
 // Returns an empty (non-nil) Header when the context is unavailable.
 func getGinHeaders(ctx context.Context) http.Header {
@@ -1307,12 +1331,21 @@ func injectFakeUserID(payload []byte, apiKey string, useCache bool) []byte {
 	return payload
 }
 
-// fingerprintSalt is the salt used by Claude Code to compute the 3-char build fingerprint.
-const fingerprintSalt = "59cf53e54c78"
+// defaultFingerprintSalt is the salt used by Claude Code to compute the 3-char build fingerprint.
+// Configurable via claude-header-defaults.fingerprint-salt for when Anthropic rotates it.
+const defaultFingerprintSalt = "59cf53e54c78"
+
+// resolveFingerprintSalt returns the configured salt or the compiled-in default.
+func resolveFingerprintSalt(cfg *config.Config) string {
+	if cfg != nil && cfg.ClaudeHeaderDefaults.FingerprintSalt != "" {
+		return cfg.ClaudeHeaderDefaults.FingerprintSalt
+	}
+	return defaultFingerprintSalt
+}
 
 // computeFingerprint computes the 3-char build fingerprint that Claude Code embeds in cc_version.
 // Algorithm: SHA256(salt + messageText[4] + messageText[7] + messageText[20] + version)[:3]
-func computeFingerprint(messageText, version string) string {
+func computeFingerprint(salt, messageText, version string) string {
 	indices := [3]int{4, 7, 20}
 	runes := []rune(messageText)
 	var sb strings.Builder
@@ -1323,7 +1356,7 @@ func computeFingerprint(messageText, version string) string {
 			sb.WriteRune('0')
 		}
 	}
-	input := fingerprintSalt + sb.String() + version
+	input := salt + sb.String() + version
 	h := sha256.Sum256([]byte(input))
 	return hex.EncodeToString(h[:])[:3]
 }
@@ -1331,11 +1364,11 @@ func computeFingerprint(messageText, version string) string {
 // generateBillingHeader creates the x-anthropic-billing-header text block that
 // real Claude Code prepends to every system prompt array.
 // Format: x-anthropic-billing-header: cc_version=<ver>.<build>; cc_entrypoint=<ep>; cch=<hash>; [cc_workload=<wl>;]
-func generateBillingHeader(payload []byte, experimentalCCHSigning bool, version, messageText, entrypoint, workload string) string {
+func generateBillingHeader(payload []byte, experimentalCCHSigning bool, salt, version, messageText, entrypoint, workload string) string {
 	if entrypoint == "" {
 		entrypoint = "cli"
 	}
-	buildHash := computeFingerprint(messageText, version)
+	buildHash := computeFingerprint(salt, messageText, version)
 	workloadPart := ""
 	if workload != "" {
 		workloadPart = fmt.Sprintf(" cc_workload=%s;", workload)
@@ -1352,7 +1385,7 @@ func generateBillingHeader(payload []byte, experimentalCCHSigning bool, version,
 }
 
 func checkSystemInstructionsWithMode(payload []byte, strictMode bool) []byte {
-	return checkSystemInstructionsWithSigningMode(payload, strictMode, false, "2.1.63", "", "")
+	return checkSystemInstructionsWithSigningMode(payload, strictMode, false, defaultFingerprintSalt, "2.1.63", "", "")
 }
 
 // checkSystemInstructionsWithSigningMode injects Claude Code-style system blocks:
@@ -1360,7 +1393,7 @@ func checkSystemInstructionsWithMode(payload []byte, strictMode bool) []byte {
 //	system[0]: billing header (no cache_control)
 //	system[1]: agent identifier (no cache_control)
 //	system[2..]: user system messages (cache_control added when missing)
-func checkSystemInstructionsWithSigningMode(payload []byte, strictMode bool, experimentalCCHSigning bool, version, entrypoint, workload string) []byte {
+func checkSystemInstructionsWithSigningMode(payload []byte, strictMode bool, experimentalCCHSigning bool, salt, version, entrypoint, workload string) []byte {
 	system := gjson.GetBytes(payload, "system")
 
 	// Extract original message text for fingerprint computation (before billing injection).
@@ -1378,7 +1411,7 @@ func checkSystemInstructionsWithSigningMode(payload []byte, strictMode bool, exp
 		messageText = system.String()
 	}
 
-	billingText := generateBillingHeader(payload, experimentalCCHSigning, version, messageText, entrypoint, workload)
+	billingText := generateBillingHeader(payload, experimentalCCHSigning, salt, version, messageText, entrypoint, workload)
 	// Use sjson to safely construct JSON, preventing injection via crafted billing text.
 	billingBlockBytes, _ := sjson.SetBytes([]byte(`{"type":"text"}`), "text", billingText)
 	billingBlock := string(billingBlockBytes)
@@ -1476,15 +1509,13 @@ func applyCloaking(ctx context.Context, cfg *config.Config, auth *cliproxyauth.A
 		}
 	}
 
-	// Inject system instructions (billing header + agent block) for non-haiku models.
-	// Track how many blocks were injected so obfuscation can skip them.
-	injectedBlocks := 0
-	if !strings.HasPrefix(model, "claude-3-5-haiku") {
-		entrypoint := parseEntrypointFromUA(clientUserAgent)
-		workload := getWorkloadFromContext(ctx)
-		payload = checkSystemInstructionsWithSigningMode(payload, strictMode, useExperimentalCCHSigning, billingVersion, entrypoint, workload)
-		injectedBlocks = 2 // billing block + agent block
-	}
+	// Inject system instructions (billing header + agent block) for all models.
+	// Previously haiku was excluded, but this created a detectable difference vs real
+	// Claude Code which sends billing headers for all models.
+	entrypoint := parseEntrypointFromUA(clientUserAgent)
+	workload := getWorkloadFromContext(ctx)
+	payload = checkSystemInstructionsWithSigningMode(payload, strictMode, useExperimentalCCHSigning, resolveFingerprintSalt(cfg), billingVersion, entrypoint, workload)
+	injectedBlocks := 2 // billing block + agent block
 
 	// Inject fake user ID
 	payload = injectFakeUserID(payload, apiKey, cacheUserID)

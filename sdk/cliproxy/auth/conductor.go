@@ -1087,6 +1087,11 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 
 	var lastErr error
 	for attempt := 0; ; attempt++ {
+		// Expose retry attempt to executors so they can set X-Stainless-Retry-Count accurately.
+		if opts.Metadata == nil {
+			opts.Metadata = make(map[string]any)
+		}
+		opts.Metadata["retry_attempt"] = attempt
 		resp, errExec := m.executeMixedOnce(ctx, normalized, req, opts, maxRetryCredentials)
 		if errExec == nil {
 			return resp, nil
@@ -1149,6 +1154,10 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 
 	var lastErr error
 	for attempt := 0; ; attempt++ {
+		if opts.Metadata == nil {
+			opts.Metadata = make(map[string]any)
+		}
+		opts.Metadata["retry_attempt"] = attempt
 		result, errStream := m.executeStreamMixedOnce(ctx, normalized, req, opts, maxRetryCredentials)
 		if errStream == nil {
 			return result, nil

@@ -150,6 +150,13 @@ type ClaudeHeaderDefaults struct {
 	// reused per API key/auth. Accepts Go duration strings (e.g. "24h", "168h").
 	// Default is "24h". Set to match device profile lifetime for consistency.
 	SessionTTL string `yaml:"session-ttl,omitempty" json:"session-ttl,omitempty"`
+	// FingerprintSalt overrides the SHA256 salt used to compute the 3-char build
+	// fingerprint in the billing header. Default is the value from Claude Code 2.1.63.
+	// Update this when Anthropic rotates the salt in a new CLI version.
+	FingerprintSalt string `yaml:"fingerprint-salt,omitempty" json:"fingerprint-salt,omitempty"`
+	// CCHSeed overrides the xxHash64 seed used for experimental CCH signing.
+	// Default is the value from Claude Code 2.1.63. Format: hex string (e.g. "6E52736AC806831E").
+	CCHSeed string `yaml:"cch-seed,omitempty" json:"cch-seed,omitempty"`
 }
 
 // CodexHeaderDefaults configures fallback header values injected into Codex
