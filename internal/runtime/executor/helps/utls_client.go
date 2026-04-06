@@ -46,19 +46,23 @@ func newUtlsRoundTripper(proxyURL string) *utlsRoundTripper {
 func (t *utlsRoundTripper) getOrCreateConnection(host, addr string) (*http2.ClientConn, error) {
 	t.mu.Lock()
 
+	// Fast path: reuse existing connection
 	if h2Conn, ok := t.connections[host]; ok && h2Conn.CanTakeNewRequest() {
 		t.mu.Unlock()
 		return h2Conn, nil
 	}
 
+	// Another goroutine is already creating a connection for this host — wait for it
 	if cond, ok := t.pending[host]; ok {
-		cond.Wait()
+		cond.Wait() // atomically releases t.mu and suspends
 		if h2Conn, ok := t.connections[host]; ok && h2Conn.CanTakeNewRequest() {
 			t.mu.Unlock()
 			return h2Conn, nil
 		}
+		// Connection still not available after wait — fall through to create one
 	}
 
+	// Mark this host as pending so other goroutines wait instead of racing
 	cond := sync.NewCond(&t.mu)
 	t.pending[host] = cond
 	t.mu.Unlock()
@@ -75,6 +79,10 @@ func (t *utlsRoundTripper) getOrCreateConnection(host, addr string) (*http2.Clie
 		return nil, err
 	}
 
+	// If a stale connection exists, let it drain naturally — closing it would
+	// disrupt any in-flight requests on shared HTTP/2 multiplexed streams.
+	// Once removed from the map, no new requests will use it, and it will be
+	// garbage collected after all existing streams complete.
 	t.connections[host] = h2Conn
 	return h2Conn, nil
 }
@@ -163,9 +171,23 @@ func (f *fallbackRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 	return f.fallback.RoundTrip(req)
 }
 
-// NewUtlsHTTPClient creates an HTTP client using utls with Node.js TLS fingerprint.
-// Use this for Claude API requests to match real Claude Code's TLS behavior.
-// Falls back to standard transport for non-HTTPS requests.
+// utlsClientCache caches *http.Client instances by resolved proxy URL to enable
+// HTTP/2 connection reuse across requests. Without caching, every request creates
+// a fresh transport and pays the full TCP+TLS handshake cost (~50-200ms).
+var utlsClientCache sync.Map // proxyURL -> *http.Client
+
+// ResetUtlsClientCache clears the uTLS client cache.
+// Call this when proxy configuration changes (e.g., config hot-reload).
+func ResetUtlsClientCache() {
+	utlsClientCache.Range(func(key, _ any) bool {
+		utlsClientCache.Delete(key)
+		return true
+	})
+}
+
+// NewUtlsHTTPClient returns a cached HTTP client using utls with Node.js TLS fingerprint.
+// Clients are cached by proxy URL to enable connection reuse across requests.
+// Falls back to standard transport for non-HTTPS or non-Anthropic hosts.
 func NewUtlsHTTPClient(cfg *config.Config, auth *cliproxyauth.Auth, timeout time.Duration) *http.Client {
 	var proxyURL string
 	if auth != nil {
@@ -175,6 +197,14 @@ func NewUtlsHTTPClient(cfg *config.Config, auth *cliproxyauth.Auth, timeout time
 		proxyURL = strings.TrimSpace(cfg.ProxyURL)
 	}
 
+	// Only cache clients without per-call timeout — timeout is a client-level
+	// property that would affect all users of a shared client.
+	if timeout <= 0 {
+		if cached, ok := utlsClientCache.Load(proxyURL); ok {
+			return cached.(*http.Client)
+		}
+	}
+
 	utlsRT := newUtlsRoundTripper(proxyURL)
 
 	var standardTransport http.RoundTripper = &http.Transport{
@@ -182,6 +212,9 @@ func NewUtlsHTTPClient(cfg *config.Config, auth *cliproxyauth.Auth, timeout time
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
 	}
 	if proxyURL != "" {
 		if transport := buildProxyTransport(proxyURL); transport != nil {
@@ -195,8 +228,12 @@ func NewUtlsHTTPClient(cfg *config.Config, auth *cliproxyauth.Auth, timeout time
 			fallback: standardTransport,
 		},
 	}
+
 	if timeout > 0 {
 		client.Timeout = timeout
+		return client
 	}
-	return client
+
+	actual, _ := utlsClientCache.LoadOrStore(proxyURL, client)
+	return actual.(*http.Client)
 }

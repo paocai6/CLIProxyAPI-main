@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/watcher/diff"
 	"gopkg.in/yaml.v3"
@@ -124,6 +125,14 @@ func (w *Watcher) reloadConfig() bool {
 		} else {
 			log.Debugf("no material config field changes detected")
 		}
+	}
+
+	// Reset cached HTTP clients when proxy configuration changes so stale
+	// proxy transports are not reused after a config update.
+	if oldConfig == nil || oldConfig.ProxyURL != newConfig.ProxyURL {
+		helps.ResetProxyClientCache()
+		helps.ResetUtlsClientCache()
+		log.Debug("HTTP client caches cleared due to proxy config change")
 	}
 
 	authDirChanged := oldConfig == nil || oldConfig.AuthDir != newConfig.AuthDir

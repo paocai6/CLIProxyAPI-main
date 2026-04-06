@@ -91,7 +91,7 @@ func (t *utlsRoundTripper) getOrCreateConnection(host, addr string) (*http2.Clie
 		return nil, err
 	}
 
-	// Store the new connection
+	// Let stale connections drain naturally to avoid disrupting in-flight requests.
 	t.connections[host] = h2Conn
 	return h2Conn, nil
 }
