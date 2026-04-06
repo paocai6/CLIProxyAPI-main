@@ -1250,7 +1250,11 @@
           "force_model_prefix": "Force Model Prefix",
           "force_model_prefix_desc": "Unprefixed model requests only use credentials without prefix",
           "ws_auth": "WebSocket Authentication",
-          "ws_auth_desc": "Enable WebSocket authentication (/v1/ws)"
+          "ws_auth_desc": "Enable WebSocket authentication (/v1/ws)",
+          "proxy_pool_label": "Proxy Pool",
+          "proxy_pool_hint": "Configure residential IP proxies. Select one during OAuth login to bind to the account.",
+          "proxy_pool_name_placeholder": "Name (e.g. Residential-1)",
+          "proxy_pool_add": "Add Proxy"
         },
         "quota": {
           "title": "Quota Fallback",

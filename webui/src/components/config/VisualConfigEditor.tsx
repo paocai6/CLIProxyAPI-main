@@ -938,6 +938,68 @@ export function VisualConfigEditor({
                   onChange={(wsAuth) => onChange({ wsAuth })}
                 />
               </SectionGrid>
+
+              <Divider />
+
+              <FieldShell
+                label={t('config_management.visual.sections.network.proxy_pool_label')}
+                hint={t('config_management.visual.sections.network.proxy_pool_hint')}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {values.proxyPool.map((entry, idx) => (
+                    <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        placeholder={t('config_management.visual.sections.network.proxy_pool_name_placeholder')}
+                        value={entry.name}
+                        disabled={disabled}
+                        onChange={(e) => {
+                          const next = [...values.proxyPool];
+                          next[idx] = { ...next[idx], name: e.target.value };
+                          onChange({ proxyPool: next });
+                        }}
+                        className="input"
+                        style={{ flex: '0 0 30%' }}
+                      />
+                      <input
+                        type="text"
+                        placeholder="socks5://user:pass@ip:port"
+                        value={entry.url}
+                        disabled={disabled}
+                        onChange={(e) => {
+                          const next = [...values.proxyPool];
+                          next[idx] = { ...next[idx], url: e.target.value };
+                          onChange({ proxyPool: next });
+                        }}
+                        className="input"
+                        style={{ flex: 1 }}
+                      />
+                      <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => {
+                          const next = values.proxyPool.filter((_, i) => i !== idx);
+                          onChange({ proxyPool: next });
+                        }}
+                        style={{ background: 'none', border: '1px solid var(--border-primary)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', color: 'var(--text-tertiary)' }}
+                        title={t('common.delete')}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() =>
+                      onChange({ proxyPool: [...values.proxyPool, { name: '', url: '' }] })
+                    }
+                    style={{ background: 'none', border: '1px dashed var(--border-primary)', borderRadius: 8, padding: '8px 16px', cursor: 'pointer', color: 'var(--primary-color)', fontSize: '0.9rem', width: '100%' }}
+                  >
+                    + {t('config_management.visual.sections.network.proxy_pool_add')}
+                  </button>
+                </div>
+              </FieldShell>
             </SectionStack>
           </ConfigSection>
 

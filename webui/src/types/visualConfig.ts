@@ -79,6 +79,7 @@ export type VisualConfigValues = {
   logsMaxTotalSizeMb: string;
   usageStatisticsEnabled: boolean;
   proxyUrl: string;
+  proxyPool: { name: string; url: string }[];
   forceModelPrefix: boolean;
   requestRetry: string;
   maxRetryCredentials: string;
@@ -119,6 +120,7 @@ export const DEFAULT_VISUAL_VALUES: VisualConfigValues = {
   logsMaxTotalSizeMb: '',
   usageStatisticsEnabled: false,
   proxyUrl: '',
+  proxyPool: [],
   forceModelPrefix: false,
   requestRetry: '',
   maxRetryCredentials: '',

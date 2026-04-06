@@ -1250,7 +1250,11 @@
           "force_model_prefix": "强制模型前缀",
           "force_model_prefix_desc": "未带前缀的模型请求只使用无前缀凭据",
           "ws_auth": "WebSocket 认证",
-          "ws_auth_desc": "启用 WebSocket 连接认证 (/v1/ws)"
+          "ws_auth_desc": "启用 WebSocket 连接认证 (/v1/ws)",
+          "proxy_pool_label": "代理池",
+          "proxy_pool_hint": "配置多个住宅 IP 代理，OAuth 登录时可直接选择绑定到账户",
+          "proxy_pool_name_placeholder": "名称（如：住宅IP-1）",
+          "proxy_pool_add": "添加代理"
         },
         "quota": {
           "title": "配额回退",

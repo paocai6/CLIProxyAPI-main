@@ -617,6 +617,12 @@ function getNextDirtyFields(
   if (Object.prototype.hasOwnProperty.call(patch, 'proxyUrl')) {
     updateDirty('proxyUrl', nextValues.proxyUrl === baselineValues.proxyUrl);
   }
+  if (Object.prototype.hasOwnProperty.call(patch, 'proxyPool')) {
+    updateDirty(
+      'proxyPool',
+      JSON.stringify(nextValues.proxyPool) === JSON.stringify(baselineValues.proxyPool)
+    );
+  }
   if (Object.prototype.hasOwnProperty.call(patch, 'forceModelPrefix')) {
     updateDirty(
       'forceModelPrefix',
@@ -847,6 +853,12 @@ export function useVisualConfig() {
         usageStatisticsEnabled: Boolean(parsed['usage-statistics-enabled']),
 
         proxyUrl: typeof parsed['proxy-url'] === 'string' ? parsed['proxy-url'] : '',
+        proxyPool: Array.isArray(parsed['proxy-pool'])
+          ? (parsed['proxy-pool'] as { name: string; url: string }[]).map((e) => ({
+              name: String((e as Record<string, unknown>).name ?? ''),
+              url: String((e as Record<string, unknown>).url ?? ''),
+            }))
+          : [],
         forceModelPrefix: Boolean(parsed['force-model-prefix']),
         requestRetry: String(parsed['request-retry'] ?? ''),
         maxRetryCredentials: String(parsed['max-retry-credentials'] ?? ''),
@@ -955,6 +967,21 @@ export function useVisualConfig() {
         setBooleanInDoc(doc, ['usage-statistics-enabled'], values.usageStatisticsEnabled);
 
         setStringInDoc(doc, ['proxy-url'], values.proxyUrl);
+
+        // proxy-pool serialization
+        if (values.proxyPool.length > 0 || docHas(doc, ['proxy-pool'])) {
+          const poolSeq = doc.createNode(
+            values.proxyPool
+              .filter((e) => e.name.trim() || e.url.trim())
+              .map((e) => ({ name: e.name, url: e.url }))
+          );
+          if (values.proxyPool.length > 0) {
+            doc.set('proxy-pool', poolSeq);
+          } else {
+            doc.delete('proxy-pool');
+          }
+        }
+
         setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);
         setIntFromStringInDoc(doc, ['request-retry'], values.requestRetry);
         setIntFromStringInDoc(doc, ['max-retry-credentials'], values.maxRetryCredentials);
