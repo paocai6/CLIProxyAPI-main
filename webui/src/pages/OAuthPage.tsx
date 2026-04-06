@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/Input';
 import { useNotificationStore, useThemeStore } from '@/stores';
 import { oauthApi, type OAuthProvider, type IFlowCookieAuthResponse } from '@/services/api/oauth';
 import { vertexApi, type VertexImportResponse } from '@/services/api/vertex';
+import { configApi } from '@/services/api/config';
 import { copyToClipboard } from '@/utils/clipboard';
 import styles from './OAuthPage.module.scss';
 import iconCodex from '@/assets/icons/codex.svg';
@@ -95,6 +96,7 @@ export function OAuthPage() {
   const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const [states, setStates] = useState<Record<OAuthProvider, ProviderState>>({} as Record<OAuthProvider, ProviderState>);
   const [proxyUrl, setProxyUrl] = useState('');
+  const [proxyPool, setProxyPool] = useState<{ name: string; url: string }[]>([]);
   const [iflowCookie, setIflowCookie] = useState<IFlowCookieState>({ cookie: '', loading: false });
   const [vertexState, setVertexState] = useState<VertexImportState>({
     fileName: '',
@@ -107,6 +109,14 @@ export function OAuthPage() {
   const clearTimers = useCallback(() => {
     Object.values(timers.current).forEach((timer) => window.clearInterval(timer));
     timers.current = {};
+  }, []);
+
+  useEffect(() => {
+    configApi.getRawConfig().then((cfg: unknown) => {
+      const obj = cfg as Record<string, unknown>;
+      const pool = obj['proxy-pool'] as { name: string; url: string }[] | undefined;
+      if (Array.isArray(pool)) setProxyPool(pool);
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -390,14 +400,43 @@ export function OAuthPage() {
                     </div>
                   )}
                   <div className={styles.geminiProjectField}>
-                    <Input
-                      label={t('auth_login.oauth_proxy_label')}
-                      hint={t('auth_login.oauth_proxy_hint')}
-                      value={proxyUrl}
-                      disabled={Boolean(state.polling)}
-                      onChange={(e) => setProxyUrl(e.target.value)}
-                      placeholder={t('auth_login.oauth_proxy_placeholder')}
-                    />
+                    <label style={{ display: 'block', fontWeight: 600, marginBottom: 6, fontSize: '0.9rem' }}>
+                      {t('auth_login.oauth_proxy_label')}
+                    </label>
+                    {proxyPool.length > 0 ? (
+                      <select
+                        value={proxyUrl}
+                        disabled={Boolean(state.polling)}
+                        onChange={(e) => setProxyUrl(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '10px 12px',
+                          borderRadius: 8,
+                          border: '1px solid var(--border-primary)',
+                          background: 'var(--bg-secondary)',
+                          color: 'var(--text-primary)',
+                          fontSize: '0.9rem',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <option value="">{t('auth_login.oauth_proxy_default')}</option>
+                        {proxyPool.map((p, i) => (
+                          <option key={i} value={p.url}>
+                            {p.name} ({p.url})
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <Input
+                        value={proxyUrl}
+                        disabled={Boolean(state.polling)}
+                        onChange={(e) => setProxyUrl(e.target.value)}
+                        placeholder={t('auth_login.oauth_proxy_placeholder')}
+                      />
+                    )}
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: 4 }}>
+                      {t('auth_login.oauth_proxy_hint')}
+                    </div>
                   </div>
                   {state.url && (
                     <div className={styles.authUrlBox}>

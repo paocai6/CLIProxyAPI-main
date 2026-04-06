@@ -106,6 +106,16 @@ routing:
 #   min-interval-ms: 2000    # min ms between requests to same account (default 2000)
 #   jitter-ms: 3000          # random jitter ms added to interval (default 3000, total 2-5s)
 
+# Proxy pool for OAuth login. Each account can select a proxy during login,
+# which will be automatically bound to that account for all subsequent requests.
+# proxy-pool:
+#   - name: "住宅IP-1"
+#     url: "socks5://user:pass@residential-ip-1:port"
+#   - name: "住宅IP-2"
+#     url: "socks5://user:pass@residential-ip-2:port"
+#   - name: "住宅IP-3"
+#     url: "http://user:pass@residential-ip-3:port"
+
 # When true, enable authentication for the WebSocket API (/v1/ws).
 ws-auth: false
 

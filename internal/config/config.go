@@ -85,6 +85,9 @@ type Config struct {
 	// Pacing controls per-account request pacing for anti-detection.
 	Pacing PacingConfig `yaml:"pacing,omitempty" json:"pacing,omitempty"`
 
+	// ProxyPool is a named list of proxy URLs for OAuth login and per-account routing.
+	ProxyPool []ProxyPoolEntry `yaml:"proxy-pool,omitempty" json:"proxy-pool,omitempty"`
+
 	// WebsocketAuth enables or disables authentication for the WebSocket API.
 	WebsocketAuth bool `yaml:"ws-auth" json:"ws-auth"`
 
@@ -240,6 +243,12 @@ type PacingConfig struct {
 	// JitterMs is the random jitter in milliseconds added to min-interval.
 	// Default 3000 (3 seconds). Makes intervals 2-5s by default.
 	JitterMs int `yaml:"jitter-ms,omitempty" json:"jitter-ms,omitempty"`
+}
+
+// ProxyPoolEntry defines a named proxy URL for OAuth login and per-account routing.
+type ProxyPoolEntry struct {
+	Name string `yaml:"name" json:"name"`
+	URL  string `yaml:"url" json:"url"`
 }
 
 // OAuthModelAlias defines a model ID alias for a specific channel.
