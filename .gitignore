@@ -20,7 +20,10 @@ objectstore/*
 
 # Static assets
 static/*
-!static/management.html
+
+# WebUI build output
+webui/node_modules/
+webui/dist/
 
 # Authentication data
 auths/*
