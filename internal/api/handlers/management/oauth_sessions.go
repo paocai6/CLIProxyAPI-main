@@ -25,6 +25,7 @@ var (
 type oauthSession struct {
 	Provider  string
 	Status    string
+	ProxyURL  string
 	CreatedAt time.Time
 	ExpiresAt time.Time
 }
@@ -54,6 +55,10 @@ func (s *oauthSessionStore) purgeExpiredLocked(now time.Time) {
 }
 
 func (s *oauthSessionStore) Register(state, provider string) {
+	s.RegisterWithProxy(state, provider, "")
+}
+
+func (s *oauthSessionStore) RegisterWithProxy(state, provider, proxyURL string) {
 	state = strings.TrimSpace(state)
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if state == "" || provider == "" {
@@ -68,6 +73,7 @@ func (s *oauthSessionStore) Register(state, provider string) {
 	s.sessions[state] = oauthSession{
 		Provider:  provider,
 		Status:    "",
+		ProxyURL:  strings.TrimSpace(proxyURL),
 		CreatedAt: now,
 		ExpiresAt: now.Add(s.ttl),
 	}
@@ -170,6 +176,10 @@ var oauthSessions = newOAuthSessionStore(oauthSessionTTL)
 
 func RegisterOAuthSession(state, provider string) { oauthSessions.Register(state, provider) }
 
+func RegisterOAuthSessionWithProxy(state, provider, proxyURL string) {
+	oauthSessions.RegisterWithProxy(state, provider, proxyURL)
+}
+
 func SetOAuthSessionError(state, message string) { oauthSessions.SetError(state, message) }
 
 func CompleteOAuthSession(state string) { oauthSessions.Complete(state) }
@@ -184,6 +194,14 @@ func GetOAuthSession(state string) (provider string, status string, ok bool) {
 		return "", "", false
 	}
 	return session.Provider, session.Status, true
+}
+
+func GetOAuthSessionProxyURL(state string) string {
+	session, ok := oauthSessions.Get(state)
+	if !ok {
+		return ""
+	}
+	return session.ProxyURL
 }
 
 func IsOAuthSessionPending(state, provider string) bool {

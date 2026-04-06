@@ -94,6 +94,7 @@ export function OAuthPage() {
   const { showNotification } = useNotificationStore();
   const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const [states, setStates] = useState<Record<OAuthProvider, ProviderState>>({} as Record<OAuthProvider, ProviderState>);
+  const [proxyUrl, setProxyUrl] = useState('');
   const [iflowCookie, setIflowCookie] = useState<IFlowCookieState>({ cookie: '', loading: false });
   const [vertexState, setVertexState] = useState<VertexImportState>({
     fileName: '',
@@ -172,9 +173,14 @@ export function OAuthPage() {
       callbackUrl: ''
     });
     try {
+      const trimmedProxyUrl = proxyUrl.trim() || undefined;
       const res = await oauthApi.startAuth(
         provider,
-        provider === 'gemini-cli' ? { projectId: projectId || undefined } : undefined
+        provider === 'gemini-cli'
+          ? { projectId: projectId || undefined, proxyUrl: trimmedProxyUrl }
+          : trimmedProxyUrl
+            ? { proxyUrl: trimmedProxyUrl }
+            : undefined
       );
       updateProviderState(provider, { url: res.url, state: res.state, status: 'waiting', polling: true });
       if (res.state) {
@@ -383,6 +389,16 @@ export function OAuthPage() {
                       />
                     </div>
                   )}
+                  <div className={styles.geminiProjectField}>
+                    <Input
+                      label={t('auth_login.oauth_proxy_label')}
+                      hint={t('auth_login.oauth_proxy_hint')}
+                      value={proxyUrl}
+                      disabled={Boolean(state.polling)}
+                      onChange={(e) => setProxyUrl(e.target.value)}
+                      placeholder={t('auth_login.oauth_proxy_placeholder')}
+                    />
+                  </div>
                   {state.url && (
                     <div className={styles.authUrlBox}>
                       <div className={styles.authUrlLabel}>{t(provider.urlLabelKey)}</div>

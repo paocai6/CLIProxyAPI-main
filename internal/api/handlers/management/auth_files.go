@@ -34,6 +34,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v6/sdk/auth"
+	"github.com/router-for-me/CLIProxyAPI/v6/sdk/proxyutil"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
@@ -1403,6 +1404,7 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
 func (h *Handler) RequestAnthropicToken(c *gin.Context) {
 	ctx := context.Background()
 	ctx = PopulateAuthContext(ctx, c)
+	proxyURL := c.Query("proxy_url")
 
 	fmt.Println("Initializing Claude authentication...")
 
@@ -1433,7 +1435,7 @@ func (h *Handler) RequestAnthropicToken(c *gin.Context) {
 		return
 	}
 
-	RegisterOAuthSession(state, "anthropic")
+	RegisterOAuthSessionWithProxy(state, "anthropic", proxyURL)
 
 	isWebUI := isWebUIRequest(c)
 	var forwarder *callbackForwarder
@@ -1524,6 +1526,7 @@ func (h *Handler) RequestAnthropicToken(c *gin.Context) {
 			Provider: "claude",
 			FileName: fmt.Sprintf("claude-%s.json", tokenStorage.Email),
 			Storage:  tokenStorage,
+			ProxyURL: proxyURL,
 			Metadata: map[string]any{"email": tokenStorage.Email},
 		}
 		savedPath, errSave := h.saveTokenRecord(ctx, record)
@@ -1548,7 +1551,21 @@ func (h *Handler) RequestAnthropicToken(c *gin.Context) {
 func (h *Handler) RequestGeminiCLIToken(c *gin.Context) {
 	ctx := context.Background()
 	ctx = PopulateAuthContext(ctx, c)
-	proxyHTTPClient := util.SetProxy(&h.cfg.SDKConfig, &http.Client{})
+	proxyURL := c.Query("proxy_url")
+	var proxyHTTPClient *http.Client
+	if proxyURL != "" {
+		transport, _, errBuild := proxyutil.BuildHTTPTransport(proxyURL)
+		if errBuild != nil {
+			log.Errorf("failed to build proxy transport for %q: %v", proxyURL, errBuild)
+		}
+		if transport != nil {
+			proxyHTTPClient = &http.Client{Transport: transport}
+		} else {
+			proxyHTTPClient = util.SetProxy(&h.cfg.SDKConfig, &http.Client{})
+		}
+	} else {
+		proxyHTTPClient = util.SetProxy(&h.cfg.SDKConfig, &http.Client{})
+	}
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, proxyHTTPClient)
 
 	// Optional project ID from query
@@ -1574,7 +1591,7 @@ func (h *Handler) RequestGeminiCLIToken(c *gin.Context) {
 	state := fmt.Sprintf("gem-%d", time.Now().UnixNano())
 	authURL := conf.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "consent"))
 
-	RegisterOAuthSession(state, "gemini")
+	RegisterOAuthSessionWithProxy(state, "gemini", proxyURL)
 
 	isWebUI := isWebUIRequest(c)
 	var forwarder *callbackForwarder
@@ -1792,6 +1809,7 @@ func (h *Handler) RequestGeminiCLIToken(c *gin.Context) {
 			Provider: "gemini",
 			FileName: fileName,
 			Storage:  &ts,
+			ProxyURL: proxyURL,
 			Metadata: recordMetadata,
 		}
 		savedPath, errSave := h.saveTokenRecord(ctx, record)
@@ -1812,6 +1830,7 @@ func (h *Handler) RequestGeminiCLIToken(c *gin.Context) {
 func (h *Handler) RequestCodexToken(c *gin.Context) {
 	ctx := context.Background()
 	ctx = PopulateAuthContext(ctx, c)
+	proxyURL := c.Query("proxy_url")
 
 	fmt.Println("Initializing Codex authentication...")
 
@@ -1842,7 +1861,7 @@ func (h *Handler) RequestCodexToken(c *gin.Context) {
 		return
 	}
 
-	RegisterOAuthSession(state, "codex")
+	RegisterOAuthSessionWithProxy(state, "codex", proxyURL)
 
 	isWebUI := isWebUIRequest(c)
 	var forwarder *callbackForwarder
@@ -1932,6 +1951,7 @@ func (h *Handler) RequestCodexToken(c *gin.Context) {
 			Provider: "codex",
 			FileName: fileName,
 			Storage:  tokenStorage,
+			ProxyURL: proxyURL,
 			Metadata: map[string]any{
 				"email":      tokenStorage.Email,
 				"account_id": tokenStorage.AccountID,
@@ -1958,6 +1978,7 @@ func (h *Handler) RequestCodexToken(c *gin.Context) {
 func (h *Handler) RequestAntigravityToken(c *gin.Context) {
 	ctx := context.Background()
 	ctx = PopulateAuthContext(ctx, c)
+	proxyURL := c.Query("proxy_url")
 
 	fmt.Println("Initializing Antigravity authentication...")
 	if strings.TrimSpace(antigravity.OAuthClientID()) == "" {
@@ -1977,7 +1998,7 @@ func (h *Handler) RequestAntigravityToken(c *gin.Context) {
 	redirectURI := fmt.Sprintf("http://localhost:%d/oauth-callback", antigravity.CallbackPort)
 	authURL := authSvc.BuildAuthURL(state, redirectURI)
 
-	RegisterOAuthSession(state, "antigravity")
+	RegisterOAuthSessionWithProxy(state, "antigravity", proxyURL)
 
 	isWebUI := isWebUIRequest(c)
 	var forwarder *callbackForwarder
@@ -2103,6 +2124,7 @@ func (h *Handler) RequestAntigravityToken(c *gin.Context) {
 			Provider: "antigravity",
 			FileName: fileName,
 			Label:    label,
+			ProxyURL: proxyURL,
 			Metadata: metadata,
 		}
 		savedPath, errSave := h.saveTokenRecord(ctx, record)
@@ -2127,6 +2149,7 @@ func (h *Handler) RequestAntigravityToken(c *gin.Context) {
 func (h *Handler) RequestQwenToken(c *gin.Context) {
 	ctx := context.Background()
 	ctx = PopulateAuthContext(ctx, c)
+	proxyURL := c.Query("proxy_url")
 
 	fmt.Println("Initializing Qwen authentication...")
 
@@ -2143,7 +2166,7 @@ func (h *Handler) RequestQwenToken(c *gin.Context) {
 	}
 	authURL := deviceFlow.VerificationURIComplete
 
-	RegisterOAuthSession(state, "qwen")
+	RegisterOAuthSessionWithProxy(state, "qwen", proxyURL)
 
 	go func() {
 		fmt.Println("Waiting for authentication...")
@@ -2163,6 +2186,7 @@ func (h *Handler) RequestQwenToken(c *gin.Context) {
 			Provider: "qwen",
 			FileName: fmt.Sprintf("qwen-%s.json", tokenStorage.Email),
 			Storage:  tokenStorage,
+			ProxyURL: proxyURL,
 			Metadata: map[string]any{"email": tokenStorage.Email},
 		}
 		savedPath, errSave := h.saveTokenRecord(ctx, record)
@@ -2183,6 +2207,7 @@ func (h *Handler) RequestQwenToken(c *gin.Context) {
 func (h *Handler) RequestKimiToken(c *gin.Context) {
 	ctx := context.Background()
 	ctx = PopulateAuthContext(ctx, c)
+	proxyURL := c.Query("proxy_url")
 
 	fmt.Println("Initializing Kimi authentication...")
 
@@ -2202,7 +2227,7 @@ func (h *Handler) RequestKimiToken(c *gin.Context) {
 		authURL = deviceFlow.VerificationURI
 	}
 
-	RegisterOAuthSession(state, "kimi")
+	RegisterOAuthSessionWithProxy(state, "kimi", proxyURL)
 
 	go func() {
 		fmt.Println("Waiting for authentication...")
@@ -2239,6 +2264,7 @@ func (h *Handler) RequestKimiToken(c *gin.Context) {
 			FileName: fileName,
 			Label:    "Kimi User",
 			Storage:  tokenStorage,
+			ProxyURL: proxyURL,
 			Metadata: metadata,
 		}
 		savedPath, errSave := h.saveTokenRecord(ctx, record)
@@ -2260,6 +2286,7 @@ func (h *Handler) RequestKimiToken(c *gin.Context) {
 func (h *Handler) RequestIFlowToken(c *gin.Context) {
 	ctx := context.Background()
 	ctx = PopulateAuthContext(ctx, c)
+	proxyURL := c.Query("proxy_url")
 
 	fmt.Println("Initializing iFlow authentication...")
 
@@ -2267,7 +2294,7 @@ func (h *Handler) RequestIFlowToken(c *gin.Context) {
 	authSvc := iflowauth.NewIFlowAuth(h.cfg)
 	authURL, redirectURI := authSvc.AuthorizationURL(state, iflowauth.CallbackPort)
 
-	RegisterOAuthSession(state, "iflow")
+	RegisterOAuthSessionWithProxy(state, "iflow", proxyURL)
 
 	isWebUI := isWebUIRequest(c)
 	var forwarder *callbackForwarder
@@ -2348,6 +2375,7 @@ func (h *Handler) RequestIFlowToken(c *gin.Context) {
 			Provider:   "iflow",
 			FileName:   fmt.Sprintf("iflow-%s.json", identifier),
 			Storage:    tokenStorage,
+			ProxyURL:   proxyURL,
 			Metadata:   map[string]any{"email": identifier, "api_key": tokenStorage.APIKey},
 			Attributes: map[string]string{"api_key": tokenStorage.APIKey},
 		}
