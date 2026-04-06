@@ -202,11 +202,6 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 				h.attemptsMu.Unlock()
 			}
 		}
-		if secretHash == "" && envSecret == "" {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "remote management key not set"})
-			return
-		}
-
 		// Accept either Authorization: Bearer <key> or X-Management-Key
 		var provided string
 		if ah := c.GetHeader("Authorization"); ah != "" {
@@ -221,21 +216,29 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 			provided = c.GetHeader("X-Management-Key")
 		}
 
-		if provided == "" {
-			if !localClient {
-				fail()
-			}
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing management key"})
-			return
-		}
-
-		if localClient {
+		// Local clients can authenticate with the localPassword (TUI mode).
+		// Check this BEFORE the secretHash guard so localhost auth works even
+		// when no remote management key is configured.
+		if localClient && provided != "" {
 			if lp := h.localPassword; lp != "" {
 				if subtle.ConstantTimeCompare([]byte(provided), []byte(lp)) == 1 {
 					c.Next()
 					return
 				}
 			}
+		}
+
+		if secretHash == "" && envSecret == "" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "remote management key not set"})
+			return
+		}
+
+		if provided == "" {
+			if !localClient {
+				fail()
+			}
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing management key"})
+			return
 		}
 
 		if envSecret != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(envSecret)) == 1 {

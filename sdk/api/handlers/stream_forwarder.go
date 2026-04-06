@@ -98,6 +98,9 @@ func (h *BaseAPIHandler) ForwardStream(c *gin.Context, flusher http.Flusher, can
 			flusher.Flush()
 		case errMsg, ok := <-errs:
 			if !ok {
+				// Channel closed — nil it out to prevent busy-loop from
+				// a permanently selectable closed channel.
+				errs = nil
 				continue
 			}
 			if errMsg != nil {

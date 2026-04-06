@@ -2182,7 +2182,9 @@ func retryAfterFromError(err error) *time.Duration {
 	if retryAfter == nil {
 		return nil
 	}
-	return new(*retryAfter)
+	// Copy the value — new(*retryAfter) would allocate a zero-value Duration.
+	d := *retryAfter
+	return &d
 }
 
 func statusCodeFromResult(err *Error) int {

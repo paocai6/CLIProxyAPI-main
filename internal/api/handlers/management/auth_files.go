@@ -801,10 +801,19 @@ func (h *Handler) writeAuthFile(ctx context.Context, name string, data []byte) e
 	if err != nil {
 		return err
 	}
-	if errWrite := os.WriteFile(dst, data, 0o600); errWrite != nil {
+	// Write to a temp file first, then rename for atomicity. If the store
+	// update fails afterward, remove the file to avoid inconsistent state.
+	tmp := dst + ".tmp"
+	if errWrite := os.WriteFile(tmp, data, 0o600); errWrite != nil {
 		return fmt.Errorf("failed to write file: %w", errWrite)
 	}
+	if errRename := os.Rename(tmp, dst); errRename != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("failed to finalize file: %w", errRename)
+	}
 	if err := h.upsertAuthRecord(ctx, auth); err != nil {
+		// Roll back the file write to keep disk and runtime in sync.
+		os.Remove(dst)
 		return err
 	}
 	return nil
@@ -890,6 +899,14 @@ func (h *Handler) deleteAuthFileByName(ctx context.Context, name string) (string
 			targetPath = abs
 		}
 	}
+	// Disable auth in runtime first (safe to do even if file removal fails),
+	// then remove the file and store record. This ordering prevents the auth
+	// from being used between file deletion and runtime update.
+	if targetID != "" {
+		h.disableAuth(ctx, targetID)
+	} else {
+		h.disableAuth(ctx, targetPath)
+	}
 	if errRemove := os.Remove(targetPath); errRemove != nil {
 		if os.IsNotExist(errRemove) {
 			return filepath.Base(name), http.StatusNotFound, errAuthFileNotFound
@@ -898,11 +915,6 @@ func (h *Handler) deleteAuthFileByName(ctx context.Context, name string) (string
 	}
 	if errDeleteRecord := h.deleteTokenRecord(ctx, targetPath); errDeleteRecord != nil {
 		return filepath.Base(name), http.StatusInternalServerError, errDeleteRecord
-	}
-	if targetID != "" {
-		h.disableAuth(ctx, targetID)
-	} else {
-		h.disableAuth(ctx, targetPath)
 	}
 	return filepath.Base(name), http.StatusOK, nil
 }
