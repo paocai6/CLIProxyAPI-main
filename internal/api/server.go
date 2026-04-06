@@ -860,10 +860,12 @@ func corsMiddleware() gin.HandlerFunc {
 		if origin != "" {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Vary", "Origin")
+			// CORS headers are only meaningful when an Origin is present.
+			// Update the allow-headers list when new custom headers are introduced.
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Requested-With, Accept, X-Management-Key, X-Local-Password")
+			c.Header("Access-Control-Max-Age", "86400")
 		}
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Requested-With, Accept, X-Management-Key, X-Local-Password")
-		c.Header("Access-Control-Max-Age", "86400")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(http.StatusNoContent)

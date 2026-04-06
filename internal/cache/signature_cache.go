@@ -185,12 +185,12 @@ func HasValidSignature(modelName, signature string) bool {
 
 func GetModelGroup(modelName string) string {
 	lower := strings.ToLower(modelName)
-	if strings.HasPrefix(lower, "gpt") {
-		return "gpt"
-	} else if strings.HasPrefix(lower, "claude") {
+	if strings.Contains(lower, "claude") {
 		return "claude"
-	} else if strings.HasPrefix(lower, "gemini") {
+	} else if strings.Contains(lower, "gemini") {
 		return "gemini"
+	} else if strings.Contains(lower, "gpt") {
+		return "gpt"
 	}
 	return modelName
 }
