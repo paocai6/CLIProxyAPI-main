@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	tls "github.com/refraction-networking/utls"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/tlsspec"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/proxyutil"
 	log "github.com/sirupsen/logrus"
@@ -15,7 +16,7 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-// utlsRoundTripper implements http.RoundTripper using utls with Chrome fingerprint
+// utlsRoundTripper implements http.RoundTripper using utls with Node.js TLS fingerprint
 // to bypass Cloudflare's TLS fingerprinting on Anthropic domains.
 type utlsRoundTripper struct {
 	// mu protects the connections map and pending map
@@ -95,9 +96,9 @@ func (t *utlsRoundTripper) getOrCreateConnection(host, addr string) (*http2.Clie
 	return h2Conn, nil
 }
 
-// createConnection creates a new HTTP/2 connection with Chrome TLS fingerprint.
-// Chrome's TLS fingerprint is closer to Node.js/OpenSSL (which real Claude Code uses)
-// than Firefox, reducing the mismatch between TLS layer and HTTP headers.
+// createConnection creates a new HTTP/2 connection with Node.js TLS fingerprint.
+// Uses a custom ClientHelloSpec matching Node.js 20+ with OpenSSL 3.x to produce
+// a JA3/JA4 fingerprint consistent with real Claude Code.
 func (t *utlsRoundTripper) createConnection(host, addr string) (*http2.ClientConn, error) {
 	conn, err := t.dialer.Dial("tcp", addr)
 	if err != nil {
@@ -105,7 +106,11 @@ func (t *utlsRoundTripper) createConnection(host, addr string) (*http2.ClientCon
 	}
 
 	tlsConfig := &tls.Config{ServerName: host}
-	tlsConn := tls.UClient(conn, tlsConfig, tls.HelloChrome_Auto)
+	tlsConn := tls.UClient(conn, tlsConfig, tls.HelloCustom)
+	if err := tlsConn.ApplyPreset(tlsspec.NodeJS()); err != nil {
+		conn.Close()
+		return nil, err
+	}
 
 	if err := tlsConn.Handshake(); err != nil {
 		conn.Close()
@@ -153,7 +158,7 @@ func (t *utlsRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 }
 
 // NewAnthropicHttpClient creates an HTTP client that bypasses TLS fingerprinting
-// for Anthropic domains by using utls with Chrome fingerprint.
+// for Anthropic domains by using utls with Node.js TLS fingerprint.
 // It accepts optional SDK configuration for proxy settings.
 func NewAnthropicHttpClient(cfg *config.SDKConfig) *http.Client {
 	return &http.Client{

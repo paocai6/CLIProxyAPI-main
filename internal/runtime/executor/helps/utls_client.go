@@ -9,6 +9,7 @@ import (
 
 	tls "github.com/refraction-networking/utls"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/tlsspec"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/proxyutil"
 	log "github.com/sirupsen/logrus"
@@ -16,7 +17,7 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-// utlsRoundTripper implements http.RoundTripper using utls with Chrome fingerprint
+// utlsRoundTripper implements http.RoundTripper using utls with Node.js TLS fingerprint
 // to bypass Cloudflare's TLS fingerprinting on Anthropic domains.
 type utlsRoundTripper struct {
 	mu          sync.Mutex
@@ -85,12 +86,14 @@ func (t *utlsRoundTripper) createConnection(host, addr string) (*http2.ClientCon
 	}
 
 	tlsConfig := &tls.Config{ServerName: host}
-	// NOTE: HelloChrome_Auto simulates Chrome's TLS fingerprint, not Node.js/OpenSSL
-	// which real Claude Code uses. A JA3/JA4 fingerprint analysis can distinguish these.
-	// uTLS does not provide a Node.js/OpenSSL profile; Chrome is the closest available
-	// approximation. A custom ClientHelloSpec matching Node.js would be ideal but requires
-	// continuous maintenance as Node.js updates its OpenSSL dependency.
-	tlsConn := tls.UClient(conn, tlsConfig, tls.HelloChrome_Auto)
+	// Use a custom ClientHelloSpec matching Node.js 20+ with OpenSSL 3.x,
+	// which is what real Claude Code uses. This produces a JA3/JA4 fingerprint
+	// consistent with Node.js rather than Chrome.
+	tlsConn := tls.UClient(conn, tlsConfig, tls.HelloCustom)
+	if err := tlsConn.ApplyPreset(tlsspec.NodeJS()); err != nil {
+		conn.Close()
+		return nil, err
+	}
 
 	if err := tlsConn.Handshake(); err != nil {
 		conn.Close()
@@ -160,7 +163,7 @@ func (f *fallbackRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 	return f.fallback.RoundTrip(req)
 }
 
-// NewUtlsHTTPClient creates an HTTP client using utls Chrome TLS fingerprint.
+// NewUtlsHTTPClient creates an HTTP client using utls with Node.js TLS fingerprint.
 // Use this for Claude API requests to match real Claude Code's TLS behavior.
 // Falls back to standard transport for non-HTTPS requests.
 func NewUtlsHTTPClient(cfg *config.Config, auth *cliproxyauth.Auth, timeout time.Duration) *http.Client {
