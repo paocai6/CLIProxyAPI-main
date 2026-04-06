@@ -77,18 +77,18 @@ func purgeExpiredCaches() {
 	signatureCache.Range(func(key, value any) bool {
 		sc := value.(*groupCache)
 		sc.mu.Lock()
-		// Remove expired entries
 		for k, entry := range sc.entries {
 			if now.Sub(entry.Timestamp) > SignatureCacheTTL {
 				delete(sc.entries, k)
 			}
 		}
-		isEmpty := len(sc.entries) == 0
-		sc.mu.Unlock()
-		// Remove cache bucket if empty
-		if isEmpty {
+		if len(sc.entries) == 0 {
+			// Delete while still holding the lock to prevent a concurrent
+			// getOrCreateGroupCache from loading this empty bucket and
+			// adding entries that would be lost by the subsequent Delete.
 			signatureCache.Delete(key)
 		}
+		sc.mu.Unlock()
 		return true
 	})
 }
@@ -184,11 +184,12 @@ func HasValidSignature(modelName, signature string) bool {
 }
 
 func GetModelGroup(modelName string) string {
-	if strings.Contains(modelName, "gpt") {
+	lower := strings.ToLower(modelName)
+	if strings.HasPrefix(lower, "gpt") {
 		return "gpt"
-	} else if strings.Contains(modelName, "claude") {
+	} else if strings.HasPrefix(lower, "claude") {
 		return "claude"
-	} else if strings.Contains(modelName, "gemini") {
+	} else if strings.HasPrefix(lower, "gemini") {
 		return "gemini"
 	}
 	return modelName

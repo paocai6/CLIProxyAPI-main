@@ -40,7 +40,7 @@ func (ts *IFlowTokenStorage) SaveTokenToFile(authFilePath string) error {
 		return fmt.Errorf("iflow token: create directory failed: %w", err)
 	}
 
-	f, err := os.Create(authFilePath)
+	f, err := os.OpenFile(authFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("iflow token: create file failed: %w", err)
 	}

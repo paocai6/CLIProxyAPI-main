@@ -50,7 +50,8 @@ const claudeToolPrefix = ""
 
 // Anthropic-compatible upstreams may reject or even crash when Claude models
 // omit max_tokens. Prefer registered model metadata before using a fallback.
-const defaultModelMaxTokens = 1024
+// 16384 is a safe default for all current Claude models (3.x and 4.x families).
+const defaultModelMaxTokens = 16384
 
 func NewClaudeExecutor(cfg *config.Config) *ClaudeExecutor {
 	// Always reconcile session TTL with config: if session-ttl is set, use it;
@@ -441,7 +442,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		// If from == to (Claude → Claude), directly forward the SSE stream without translation
 		if from == to {
 			scanner := bufio.NewScanner(decodedBody)
-			scanner.Buffer(nil, 52_428_800) // 50MB
+			scanner.Buffer(nil, streamScannerBuffer)
 			for scanner.Scan() {
 				line := scanner.Bytes()
 				helps.AppendAPIResponseChunk(ctx, e.cfg, line)
@@ -467,7 +468,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 
 		// For other formats, use translation
 		scanner := bufio.NewScanner(decodedBody)
-		scanner.Buffer(nil, 52_428_800) // 50MB
+		scanner.Buffer(nil, streamScannerBuffer)
 		var param any
 		for scanner.Scan() {
 			line := scanner.Bytes()

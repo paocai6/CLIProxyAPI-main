@@ -125,6 +125,22 @@ type ModelState struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// WithAttribute returns a shallow copy of the Auth with the given attribute set,
+// without mutating the original. This is useful when executors need to override
+// attributes for a single request without causing data races on shared Auth objects.
+func (a *Auth) WithAttribute(key, value string) *Auth {
+	if a == nil {
+		return nil
+	}
+	copyAuth := *a
+	copyAuth.Attributes = make(map[string]string, len(a.Attributes)+1)
+	for k, v := range a.Attributes {
+		copyAuth.Attributes[k] = v
+	}
+	copyAuth.Attributes[key] = value
+	return &copyAuth
+}
+
 // Clone shallow copies the Auth structure, duplicating maps to avoid accidental mutation.
 func (a *Auth) Clone() *Auth {
 	if a == nil {

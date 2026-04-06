@@ -847,15 +847,23 @@ func (s *Server) Stop(ctx context.Context) error {
 }
 
 // corsMiddleware returns a Gin middleware handler that adds CORS headers
-// to every response, allowing cross-origin requests.
+// to every response. It echoes the request Origin back (rather than a blanket
+// wildcard) so the Vary header is set correctly for caching. Credentials are
+// NOT allowed cross-origin — all authentication uses explicit headers
+// (Authorization, X-Management-Key) rather than cookies.
 //
 // Returns:
 //   - gin.HandlerFunc: The CORS middleware handler
 func corsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
+		origin := c.GetHeader("Origin")
+		if origin != "" {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Vary", "Origin")
+		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "*")
+		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Requested-With, Accept, X-Management-Key, X-Local-Password")
+		c.Header("Access-Control-Max-Age", "86400")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(http.StatusNoContent)
