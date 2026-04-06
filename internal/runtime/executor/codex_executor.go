@@ -576,7 +576,16 @@ func (e *CodexExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (*
 	if refreshToken == "" {
 		return auth, nil
 	}
-	svc := codexauth.NewCodexAuth(e.cfg)
+	// Use per-account proxy for token refresh to avoid leaking the account's real IP.
+	cfg := e.cfg
+	if auth.ProxyURL != "" {
+		cfgCopy := *e.cfg
+		sdkCopy := cfgCopy.SDKConfig
+		sdkCopy.ProxyURL = auth.ProxyURL
+		cfgCopy.SDKConfig = sdkCopy
+		cfg = &cfgCopy
+	}
+	svc := codexauth.NewCodexAuth(cfg)
 	td, err := svc.RefreshTokensWithRetry(ctx, refreshToken, 3)
 	if err != nil {
 		return nil, err

@@ -387,7 +387,16 @@ func (e *IFlowExecutor) refreshCookieBased(ctx context.Context, auth *cliproxyau
 
 	log.Infof("iflow executor: refreshing cookie-based API key for user: %s", email)
 
-	svc := iflowauth.NewIFlowAuth(e.cfg)
+	// Use per-account proxy for token refresh to avoid leaking the account's real IP.
+	cfg := e.cfg
+	if auth.ProxyURL != "" {
+		cfgCopy := *e.cfg
+		sdkCopy := cfgCopy.SDKConfig
+		sdkCopy.ProxyURL = auth.ProxyURL
+		cfgCopy.SDKConfig = sdkCopy
+		cfg = &cfgCopy
+	}
+	svc := iflowauth.NewIFlowAuth(cfg)
 	keyData, err := svc.RefreshAPIKey(ctx, cookie, email)
 	if err != nil {
 		log.Errorf("iflow executor: cookie-based API key refresh failed: %v", err)
@@ -435,7 +444,16 @@ func (e *IFlowExecutor) refreshOAuthBased(ctx context.Context, auth *cliproxyaut
 		log.Debugf("iflow executor: refreshing access token, old: %s", util.HideAPIKey(oldAccessToken))
 	}
 
-	svc := iflowauth.NewIFlowAuth(e.cfg)
+	// Use per-account proxy for token refresh to avoid leaking the account's real IP.
+	cfg := e.cfg
+	if auth.ProxyURL != "" {
+		cfgCopy := *e.cfg
+		sdkCopy := cfgCopy.SDKConfig
+		sdkCopy.ProxyURL = auth.ProxyURL
+		cfgCopy.SDKConfig = sdkCopy
+		cfg = &cfgCopy
+	}
+	svc := iflowauth.NewIFlowAuth(cfg)
 	tokenData, err := svc.RefreshTokens(ctx, refreshToken)
 	if err != nil {
 		log.Errorf("iflow executor: token refresh failed: %v", err)
