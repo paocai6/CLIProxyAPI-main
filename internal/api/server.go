@@ -663,28 +663,31 @@ func (s *Server) serveManagementControlPanel(c *gin.Context) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
-	filePath := managementasset.FilePath(s.configFilePath)
-	if strings.TrimSpace(filePath) == "" {
-		c.AbortWithStatus(http.StatusNotFound)
-		return
-	}
 
-	if _, err := os.Stat(filePath); err != nil {
-		if os.IsNotExist(err) {
-			// Synchronously ensure management.html is available with a detached context.
-			// Control panel bootstrap should not be canceled by client disconnects.
-			if !managementasset.EnsureLatestManagementHTML(context.Background(), managementasset.StaticDir(s.configFilePath), cfg.ProxyURL, cfg.RemoteManagement.PanelGitHubRepository) {
-				c.AbortWithStatus(http.StatusNotFound)
-				return
-			}
-		} else {
-			log.WithError(err).Error("failed to stat management control panel asset")
-			c.AbortWithStatus(http.StatusInternalServerError)
+	// Priority: local file on disk > download from GitHub > embedded fallback.
+	filePath := managementasset.FilePath(s.configFilePath)
+	if strings.TrimSpace(filePath) != "" {
+		if _, err := os.Stat(filePath); err == nil {
+			c.File(filePath)
 			return
 		}
+		// Local file missing — try to download in background, serve embedded for now.
+		go managementasset.EnsureLatestManagementHTML(
+			context.Background(),
+			managementasset.StaticDir(s.configFilePath),
+			cfg.ProxyURL,
+			cfg.RemoteManagement.PanelGitHubRepository,
+		)
 	}
 
-	c.File(filePath)
+	// Serve the embedded fallback panel — works offline, no network required.
+	data, err := managementasset.EmbeddedManagementHTML()
+	if err != nil {
+		log.WithError(err).Error("failed to read embedded management panel")
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+	c.Data(http.StatusOK, "text/html; charset=utf-8", data)
 }
 
 func (s *Server) enableKeepAlive(timeout time.Duration, onTimeout func()) {

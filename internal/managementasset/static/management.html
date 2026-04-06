@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CLIProxyAPI Management</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e4e4e7;--muted:#71717a;--accent:#6366f1;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--blue:#3b82f6}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.container{max-width:1200px;margin:0 auto;padding:20px}
+h1{font-size:1.5rem;font-weight:600;margin-bottom:4px}
+.subtitle{color:var(--muted);font-size:.875rem;margin-bottom:24px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;margin-bottom:24px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
+.card h3{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:8px}
+.card .value{font-size:1.75rem;font-weight:700}
+.card .value.green{color:var(--green)}.card .value.red{color:var(--red)}.card .value.blue{color:var(--blue)}.card .value.yellow{color:var(--yellow)}
+.section{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+.section h2{font-size:1rem;font-weight:600;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);font-size:.875rem}
+th{color:var(--muted);font-weight:500;font-size:.75rem;text-transform:uppercase;letter-spacing:.05em}
+.badge{display:inline-block;padding:2px 8px;border-radius:9999px;font-size:.75rem;font-weight:500}
+.badge-green{background:rgba(34,197,94,.15);color:var(--green)}
+.badge-red{background:rgba(239,68,68,.15);color:var(--red)}
+.badge-yellow{background:rgba(234,179,8,.15);color:var(--yellow)}
+.badge-blue{background:rgba(59,130,246,.15);color:var(--blue)}
+.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+.refresh-btn{background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:.875rem}
+.refresh-btn:hover{opacity:.9}
+.tabs{display:flex;gap:4px;margin-bottom:24px;border-bottom:1px solid var(--border);padding-bottom:0}
+.tab{padding:8px 16px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;font-size:.875rem;transition:all .2s}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-content{display:none}.tab-content.active{display:block}
+.empty{text-align:center;padding:40px;color:var(--muted)}
+.auth-key-input{display:flex;gap:8px;margin-bottom:24px}
+.auth-key-input input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:.875rem}
+.error-msg{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:var(--red);padding:12px;border-radius:8px;margin-bottom:16px;display:none}
+#loading{text-align:center;padding:60px;color:var(--muted)}
+.note{background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);color:var(--accent);padding:12px;border-radius:8px;margin-bottom:16px;font-size:.875rem}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div>
+      <h1>CLIProxyAPI Management</h1>
+      <div class="subtitle">Built-in Management Panel (Embedded)</div>
+    </div>
+    <button class="refresh-btn" onclick="loadAll()">Refresh</button>
+  </div>
+
+  <div class="auth-key-input">
+    <input type="password" id="mgmt-key" placeholder="Management Key" onkeydown="if(event.key==='Enter')loadAll()">
+    <button class="refresh-btn" onclick="loadAll()">Connect</button>
+  </div>
+
+  <div class="error-msg" id="error-msg"></div>
+
+  <div class="note">
+    This is the embedded fallback panel. For the full-featured panel, enable auto-update in config or visit
+    <a href="https://github.com/router-for-me/Cli-Proxy-API-Management-Center" style="color:var(--accent)">Management Center</a>.
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('dashboard')">Dashboard</div>
+    <div class="tab" onclick="switchTab('accounts')">Accounts</div>
+    <div class="tab" onclick="switchTab('config')">Config</div>
+  </div>
+
+  <div id="loading">Enter your management key and click Connect</div>
+
+  <div class="tab-content active" id="tab-dashboard">
+    <div class="grid" id="stats-grid"></div>
+    <div class="section" id="usage-section" style="display:none">
+      <h2>Usage Statistics</h2>
+      <div id="usage-table"></div>
+    </div>
+  </div>
+
+  <div class="tab-content" id="tab-accounts">
+    <div class="section">
+      <h2>Auth Accounts</h2>
+      <div id="auth-table"><div class="empty">No data</div></div>
+    </div>
+  </div>
+
+  <div class="tab-content" id="tab-config">
+    <div class="section">
+      <h2>Current Configuration</h2>
+      <pre id="config-content" style="font-size:.8rem;overflow-x:auto;white-space:pre-wrap;color:var(--muted)">No data</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = window.location.origin;
+let KEY = '';
+
+function getHeaders() {
+  const h = {'Accept': 'application/json'};
+  if (KEY) h['Authorization'] = 'Bearer ' + KEY;
+  return h;
+}
+
+async function api(path) {
+  const r = await fetch(BASE + '/v0/management' + path, {headers: getHeaders()});
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-msg');
+  el.textContent = msg; el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 5000);
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    const tabs = ['dashboard', 'accounts', 'config'];
+    t.classList.toggle('active', tabs[i] === name);
+  });
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+}
+
+function badge(status) {
+  const colors = {active:'green', error:'red', disabled:'yellow', pending:'blue', refreshing:'blue'};
+  return `<span class="badge badge-${colors[status]||'blue'}">${status}</span>`;
+}
+
+async function loadDashboard() {
+  try {
+    const auths = await api('/auth-files');
+    const items = Array.isArray(auths) ? auths : (auths.files || []);
+    const active = items.filter(a => a.status === 'active').length;
+    const error = items.filter(a => a.status === 'error').length;
+    const disabled = items.filter(a => a.disabled).length;
+
+    document.getElementById('stats-grid').innerHTML = `
+      <div class="card"><h3>Total Accounts</h3><div class="value blue">${items.length}</div></div>
+      <div class="card"><h3>Active</h3><div class="value green">${active}</div></div>
+      <div class="card"><h3>Errors</h3><div class="value red">${error}</div></div>
+      <div class="card"><h3>Disabled</h3><div class="value yellow">${disabled}</div></div>
+    `;
+  } catch(e) { showError('Dashboard: ' + e.message); }
+}
+
+async function loadAccounts() {
+  try {
+    const auths = await api('/auth-files');
+    const items = Array.isArray(auths) ? auths : (auths.files || []);
+    if (!items.length) { document.getElementById('auth-table').innerHTML = '<div class="empty">No accounts found</div>'; return; }
+
+    let html = '<table><thead><tr><th>Label</th><th>Provider</th><th>Status</th><th>Quota</th><th>Last Error</th></tr></thead><tbody>';
+    for (const a of items) {
+      const q = a.quota;
+      const qBadge = q && q.exceeded ? `<span class="badge badge-red">exceeded</span>` : `<span class="badge badge-green">ok</span>`;
+      const lastErr = a.last_error ? a.last_error.substring(0, 50) : '-';
+      html += `<tr><td>${a.label||a.name||a.id}</td><td>${a.provider||a.type||'-'}</td><td>${badge(a.status||'unknown')}</td><td>${qBadge}</td><td style="color:var(--muted);font-size:.8rem">${lastErr}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    document.getElementById('auth-table').innerHTML = html;
+  } catch(e) { showError('Accounts: ' + e.message); }
+}
+
+async function loadUsage() {
+  try {
+    const data = await api('/usage');
+    const sec = document.getElementById('usage-section');
+    if (!data || !data.apis || Object.keys(data.apis).length === 0) { sec.style.display = 'none'; return; }
+    sec.style.display = 'block';
+
+    let html = '<table><thead><tr><th>API Key</th><th>Requests</th><th>Tokens</th></tr></thead><tbody>';
+    for (const [key, info] of Object.entries(data.apis)) {
+      const reqs = info.total_requests || 0;
+      const tokens = info.total_tokens || 0;
+      const short = key.length > 12 ? key.substring(0, 8) + '...' + key.substring(key.length - 4) : key;
+      html += `<tr><td>${short}</td><td>${reqs.toLocaleString()}</td><td>${tokens.toLocaleString()}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    document.getElementById('usage-table').innerHTML = html;
+  } catch(e) { /* usage may not be enabled */ }
+}
+
+async function loadConfig() {
+  try {
+    const cfg = await api('/config');
+    document.getElementById('config-content').textContent = JSON.stringify(cfg, null, 2);
+  } catch(e) { showError('Config: ' + e.message); }
+}
+
+async function loadAll() {
+  KEY = document.getElementById('mgmt-key').value.trim();
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('tab-dashboard').classList.add('active');
+  await Promise.all([loadDashboard(), loadAccounts(), loadUsage(), loadConfig()]);
+}
+</script>
+</body>
+</html>
