@@ -70,6 +70,14 @@ func (s *FileTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (str
 		SetMetadata(map[string]any)
 	}
 
+	// Persist proxy_url into metadata so it's saved to the JSON file
+	if strings.TrimSpace(auth.ProxyURL) != "" {
+		if auth.Metadata == nil {
+			auth.Metadata = make(map[string]any)
+		}
+		auth.Metadata["proxy_url"] = auth.ProxyURL
+	}
+
 	switch {
 	case auth.Storage != nil:
 		if setter, ok := auth.Storage.(metadataSetter); ok {
