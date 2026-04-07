@@ -1424,8 +1424,17 @@ func (h *Handler) RequestAnthropicToken(c *gin.Context) {
 		return
 	}
 
-	// Initialize Claude auth service
-	anthropicAuth := claude.NewClaudeAuth(h.cfg)
+	// Initialize Claude auth service (use per-account proxy if specified)
+	var anthropicAuth *claude.ClaudeAuth
+	if proxyURL != "" {
+		cfgCopy := *h.cfg
+		sdkCopy := cfgCopy.SDKConfig
+		sdkCopy.ProxyURL = proxyURL
+		cfgCopy.SDKConfig = sdkCopy
+		anthropicAuth = claude.NewClaudeAuth(&cfgCopy)
+	} else {
+		anthropicAuth = claude.NewClaudeAuth(h.cfg)
+	}
 
 	// Generate authorization URL (then override redirect_uri to reuse server port)
 	authURL, state, err := anthropicAuth.GenerateAuthURL(state, pkceCodes)
@@ -1850,8 +1859,17 @@ func (h *Handler) RequestCodexToken(c *gin.Context) {
 		return
 	}
 
-	// Initialize Codex auth service
-	openaiAuth := codex.NewCodexAuth(h.cfg)
+	// Initialize Codex auth service (use per-account proxy if specified)
+	var openaiAuth *codex.CodexAuth
+	if proxyURL != "" {
+		cfgCopy := *h.cfg
+		sdkCopy := cfgCopy.SDKConfig
+		sdkCopy.ProxyURL = proxyURL
+		cfgCopy.SDKConfig = sdkCopy
+		openaiAuth = codex.NewCodexAuth(&cfgCopy)
+	} else {
+		openaiAuth = codex.NewCodexAuth(h.cfg)
+	}
 
 	// Generate authorization URL
 	authURL, err := openaiAuth.GenerateAuthURL(state, pkceCodes)
@@ -1986,7 +2004,16 @@ func (h *Handler) RequestAntigravityToken(c *gin.Context) {
 		return
 	}
 
-	authSvc := antigravity.NewAntigravityAuth(h.cfg, nil)
+	var authSvc *antigravity.AntigravityAuth
+	if proxyURL != "" {
+		cfgCopy := *h.cfg
+		sdkCopy := cfgCopy.SDKConfig
+		sdkCopy.ProxyURL = proxyURL
+		cfgCopy.SDKConfig = sdkCopy
+		authSvc = antigravity.NewAntigravityAuth(&cfgCopy, nil)
+	} else {
+		authSvc = antigravity.NewAntigravityAuth(h.cfg, nil)
+	}
 
 	state, errState := misc.GenerateRandomState()
 	if errState != nil {
@@ -2154,8 +2181,17 @@ func (h *Handler) RequestQwenToken(c *gin.Context) {
 	fmt.Println("Initializing Qwen authentication...")
 
 	state := fmt.Sprintf("gem-%d", time.Now().UnixNano())
-	// Initialize Qwen auth service
-	qwenAuth := qwen.NewQwenAuth(h.cfg)
+	// Initialize Qwen auth service (use per-account proxy if specified)
+	var qwenAuth *qwen.QwenAuth
+	if proxyURL != "" {
+		cfgCopy := *h.cfg
+		sdkCopy := cfgCopy.SDKConfig
+		sdkCopy.ProxyURL = proxyURL
+		cfgCopy.SDKConfig = sdkCopy
+		qwenAuth = qwen.NewQwenAuth(&cfgCopy)
+	} else {
+		qwenAuth = qwen.NewQwenAuth(h.cfg)
+	}
 
 	// Generate authorization URL
 	deviceFlow, err := qwenAuth.InitiateDeviceFlow(ctx)
@@ -2212,8 +2248,17 @@ func (h *Handler) RequestKimiToken(c *gin.Context) {
 	fmt.Println("Initializing Kimi authentication...")
 
 	state := fmt.Sprintf("kmi-%d", time.Now().UnixNano())
-	// Initialize Kimi auth service
-	kimiAuth := kimi.NewKimiAuth(h.cfg)
+	// Initialize Kimi auth service (use per-account proxy if specified)
+	var kimiAuth *kimi.KimiAuth
+	if proxyURL != "" {
+		cfgCopy := *h.cfg
+		sdkCopy := cfgCopy.SDKConfig
+		sdkCopy.ProxyURL = proxyURL
+		cfgCopy.SDKConfig = sdkCopy
+		kimiAuth = kimi.NewKimiAuth(&cfgCopy)
+	} else {
+		kimiAuth = kimi.NewKimiAuth(h.cfg)
+	}
 
 	// Generate authorization URL
 	deviceFlow, errStartDeviceFlow := kimiAuth.StartDeviceFlow(ctx)
@@ -2291,7 +2336,16 @@ func (h *Handler) RequestIFlowToken(c *gin.Context) {
 	fmt.Println("Initializing iFlow authentication...")
 
 	state := fmt.Sprintf("ifl-%d", time.Now().UnixNano())
-	authSvc := iflowauth.NewIFlowAuth(h.cfg)
+	var authSvc *iflowauth.IFlowAuth
+	if proxyURL != "" {
+		cfgCopy := *h.cfg
+		sdkCopy := cfgCopy.SDKConfig
+		sdkCopy.ProxyURL = proxyURL
+		cfgCopy.SDKConfig = sdkCopy
+		authSvc = iflowauth.NewIFlowAuth(&cfgCopy)
+	} else {
+		authSvc = iflowauth.NewIFlowAuth(h.cfg)
+	}
 	authURL, redirectURI := authSvc.AuthorizationURL(state, iflowauth.CallbackPort)
 
 	RegisterOAuthSessionWithProxy(state, "iflow", proxyURL)
@@ -2434,8 +2488,8 @@ func (h *Handler) RequestIFlowCookieToken(c *gin.Context) {
 		return
 	}
 
-	authSvc := iflowauth.NewIFlowAuth(h.cfg)
-	tokenData, errAuth := authSvc.AuthenticateWithCookie(ctx, cookieValue)
+	cookieAuthSvc := iflowauth.NewIFlowAuth(h.cfg)
+	tokenData, errAuth := cookieAuthSvc.AuthenticateWithCookie(ctx, cookieValue)
 	if errAuth != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": errAuth.Error()})
 		return
@@ -2443,7 +2497,7 @@ func (h *Handler) RequestIFlowCookieToken(c *gin.Context) {
 
 	tokenData.Cookie = cookieValue
 
-	tokenStorage := authSvc.CreateCookieTokenStorage(tokenData)
+	tokenStorage := cookieAuthSvc.CreateCookieTokenStorage(tokenData)
 	email := strings.TrimSpace(tokenStorage.Email)
 	if email == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "failed to extract email from token"})
