@@ -719,6 +719,12 @@ function getNextDirtyFields(
   }
   if (patch.pacing) {
     const pacingPatch = patch.pacing;
+    if (Object.prototype.hasOwnProperty.call(pacingPatch, 'enable')) {
+      updateDirty(
+        'pacing.enable' as any,
+        nextValues.pacing.enable === baselineValues.pacing.enable
+      );
+    }
     if (Object.prototype.hasOwnProperty.call(pacingPatch, 'maxConcurrency')) {
       updateDirty(
         'pacing.maxConcurrency',
