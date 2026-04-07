@@ -226,6 +226,10 @@ type RoutingConfig struct {
 	// Strategy selects the credential selection strategy.
 	// Supported values: "round-robin" (default), "fill-first".
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"`
+	// SessionAffinity enables sticky routing: requests with the same client API key
+	// are pinned to the same upstream account to maximize prompt cache hits.
+	// Default false (pure round-robin).
+	SessionAffinity bool `yaml:"session-affinity,omitempty" json:"session-affinity,omitempty"`
 }
 
 // PacingConfig controls per-account request pacing to simulate real CLI usage patterns.
