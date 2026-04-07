@@ -95,7 +95,7 @@ export function OAuthPage() {
   const { showNotification } = useNotificationStore();
   const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const [states, setStates] = useState<Record<OAuthProvider, ProviderState>>({} as Record<OAuthProvider, ProviderState>);
-  const [proxyUrl, setProxyUrl] = useState('');
+  const [proxyUrls, setProxyUrls] = useState<Record<string, string>>({});
   const [proxyPool, setProxyPool] = useState<{ name: string; url: string }[]>([]);
   const [iflowCookie, setIflowCookie] = useState<IFlowCookieState>({ cookie: '', loading: false });
   const [vertexState, setVertexState] = useState<VertexImportState>({
@@ -183,7 +183,7 @@ export function OAuthPage() {
       callbackUrl: ''
     });
     try {
-      const trimmedProxyUrl = proxyUrl.trim() || undefined;
+      const trimmedProxyUrl = (proxyUrls[provider] || '').trim() || undefined;
       const res = await oauthApi.startAuth(
         provider,
         provider === 'gemini-cli'
@@ -405,9 +405,9 @@ export function OAuthPage() {
                     </label>
                     {proxyPool.length > 0 ? (
                       <select
-                        value={proxyUrl}
+                        value={proxyUrls[provider.id] || ''}
                         disabled={Boolean(state.polling)}
-                        onChange={(e) => setProxyUrl(e.target.value)}
+                        onChange={(e) => setProxyUrls((prev) => ({ ...prev, [provider.id]: e.target.value }))}
                         style={{
                           width: '100%',
                           padding: '10px 12px',
@@ -428,9 +428,9 @@ export function OAuthPage() {
                       </select>
                     ) : (
                       <Input
-                        value={proxyUrl}
+                        value={proxyUrls[provider.id] || ''}
                         disabled={Boolean(state.polling)}
-                        onChange={(e) => setProxyUrl(e.target.value)}
+                        onChange={(e) => setProxyUrls((prev) => ({ ...prev, [provider.id]: e.target.value }))}
                         placeholder={t('auth_login.oauth_proxy_placeholder')}
                       />
                     )}
