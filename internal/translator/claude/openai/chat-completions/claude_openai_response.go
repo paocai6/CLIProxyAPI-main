@@ -315,7 +315,7 @@ func ConvertClaudeResponseToOpenAINonStream(_ context.Context, _ string, origina
 			// Handle different content block types at the beginning
 			if contentBlock := root.Get("content_block"); contentBlock.Exists() {
 				blockType := contentBlock.Get("type").String()
-				if blockType == "thinking" {
+				if blockType == "thinking" || blockType == "redacted_thinking" {
 					// Start of thinking/reasoning content - skip for now as it's handled in delta
 					continue
 				} else if blockType == "tool_use" {

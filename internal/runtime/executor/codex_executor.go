@@ -169,23 +169,90 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	}
 	helps.AppendAPIResponseChunk(ctx, e.cfg, data)
 
+	// Accumulate delta events for fallback reconstruction when
+	// response.completed carries an empty output array.
+	var accTextBuf strings.Builder
+	var accReasoningBuf strings.Builder
+	type accFuncCallHTTP struct {
+		callID string
+		name   string
+		args   strings.Builder
+	}
+	var accFuncCalls []accFuncCallHTTP
+	accFuncIndex := map[int]int{} // outputIndex -> slice index
+	var completedLine []byte
+
 	lines := bytes.Split(data, []byte("\n"))
 	for _, line := range lines {
 		if !bytes.HasPrefix(line, dataTag) {
 			continue
 		}
-
 		line = bytes.TrimSpace(line[5:])
-		if gjson.GetBytes(line, "type").String() != "response.completed" {
-			continue
-		}
+		et := gjson.GetBytes(line, "type").String()
 
-		if detail, ok := helps.ParseCodexUsage(line); ok {
+		// Accumulate delta content.
+		switch et {
+		case "response.output_text.delta":
+			if d := gjson.GetBytes(line, "delta"); d.Exists() {
+				accTextBuf.WriteString(d.String())
+			}
+		case "response.function_call_arguments.delta":
+			if d := gjson.GetBytes(line, "delta"); d.Exists() {
+				oi := int(gjson.GetBytes(line, "output_index").Int())
+				if idx, ok := accFuncIndex[oi]; ok {
+					accFuncCalls[idx].args.WriteString(d.String())
+				}
+			}
+		case "response.output_item.added":
+			item := gjson.GetBytes(line, "item")
+			if item.Exists() && item.Get("type").String() == "function_call" {
+				oi := int(gjson.GetBytes(line, "output_index").Int())
+				idx := len(accFuncCalls)
+				accFuncIndex[oi] = idx
+				accFuncCalls = append(accFuncCalls, accFuncCallHTTP{
+					callID: item.Get("call_id").String(),
+					name:   item.Get("name").String(),
+				})
+			}
+		case "response.reasoning_summary_text.delta":
+			if d := gjson.GetBytes(line, "delta"); d.Exists() {
+				accReasoningBuf.WriteString(d.String())
+			}
+		case "response.completed", "response.done":
+			completedLine = line
+		}
+	}
+
+	if completedLine != nil {
+		if detail, ok := helps.ParseCodexUsage(completedLine); ok {
 			reporter.Publish(ctx, detail)
 		}
 
+		// Reconstruct output from deltas if the terminal event has empty output.
+		hasContent := accTextBuf.Len() > 0 || len(accFuncCalls) > 0 || accReasoningBuf.Len() > 0
+		outputEmpty := len(gjson.GetBytes(completedLine, "response.output").Array()) == 0
+		if outputEmpty && hasContent {
+			outputArr := []byte(`[]`)
+			if accReasoningBuf.Len() > 0 {
+				item, _ := sjson.SetBytes([]byte(`{"type":"reasoning","summary":[{"type":"summary_text","text":""}]}`), "summary.0.text", accReasoningBuf.String())
+				outputArr, _ = sjson.SetRawBytes(outputArr, "-1", item)
+			}
+			if accTextBuf.Len() > 0 {
+				item, _ := sjson.SetBytes([]byte(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":""}]}`), "content.0.text", accTextBuf.String())
+				outputArr, _ = sjson.SetRawBytes(outputArr, "-1", item)
+			}
+			for i := range accFuncCalls {
+				item := []byte(`{"type":"function_call","call_id":"","name":"","arguments":""}`)
+				item, _ = sjson.SetBytes(item, "call_id", accFuncCalls[i].callID)
+				item, _ = sjson.SetBytes(item, "name", accFuncCalls[i].name)
+				item, _ = sjson.SetBytes(item, "arguments", accFuncCalls[i].args.String())
+				outputArr, _ = sjson.SetRawBytes(outputArr, "-1", item)
+			}
+			completedLine, _ = sjson.SetRawBytes(completedLine, "response.output", outputArr)
+		}
+
 		var param any
-		out := sdktranslator.TranslateNonStream(ctx, to, from, req.Model, originalPayload, body, line, &param)
+		out := sdktranslator.TranslateNonStream(ctx, to, from, req.Model, originalPayload, body, completedLine, &param)
 		resp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
 		return resp, nil
 	}

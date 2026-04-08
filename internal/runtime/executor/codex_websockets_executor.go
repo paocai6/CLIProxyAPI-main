@@ -310,6 +310,19 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		}
 	}
 
+	// Accumulate delta events for non-streaming fallback reconstruction.
+	// When upstream response.completed carries an empty output array,
+	// we rebuild output from the deltas collected during the WebSocket session.
+	var accTextBuf strings.Builder
+	var accReasoningBuf strings.Builder
+	type accFuncCall struct {
+		callID string
+		name   string
+		args   strings.Builder
+	}
+	var accFuncCalls []accFuncCall
+	accFuncIndex := map[int]int{} // outputIndex -> slice index
+
 	for {
 		if ctx != nil && ctx.Err() != nil {
 			return resp, ctx.Err()
@@ -347,10 +360,66 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 
 		payload = normalizeCodexWebsocketCompletion(payload)
 		eventType := gjson.GetBytes(payload, "type").String()
-		if eventType == "response.completed" {
+
+		// Accumulate content from delta events for fallback reconstruction.
+		switch eventType {
+		case "response.output_text.delta":
+			if d := gjson.GetBytes(payload, "delta"); d.Exists() {
+				accTextBuf.WriteString(d.String())
+			}
+		case "response.function_call_arguments.delta":
+			if d := gjson.GetBytes(payload, "delta"); d.Exists() {
+				oi := int(gjson.GetBytes(payload, "output_index").Int())
+				if idx, ok := accFuncIndex[oi]; ok {
+					accFuncCalls[idx].args.WriteString(d.String())
+				}
+			}
+		case "response.output_item.added":
+			item := gjson.GetBytes(payload, "item")
+			if item.Exists() && item.Get("type").String() == "function_call" {
+				oi := int(gjson.GetBytes(payload, "output_index").Int())
+				idx := len(accFuncCalls)
+				accFuncIndex[oi] = idx
+				accFuncCalls = append(accFuncCalls, accFuncCall{
+					callID: item.Get("call_id").String(),
+					name:   item.Get("name").String(),
+				})
+			}
+		case "response.reasoning_summary_text.delta":
+			if d := gjson.GetBytes(payload, "delta"); d.Exists() {
+				accReasoningBuf.WriteString(d.String())
+			}
+		}
+
+		if eventType == "response.completed" || eventType == "response.done" {
 			if detail, ok := helps.ParseCodexUsage(payload); ok {
 				reporter.Publish(ctx, detail)
 			}
+
+			// When the terminal event has an empty output array, reconstruct
+			// output from accumulated delta events so the client gets full content.
+			hasContent := accTextBuf.Len() > 0 || len(accFuncCalls) > 0 || accReasoningBuf.Len() > 0
+			outputEmpty := len(gjson.GetBytes(payload, "response.output").Array()) == 0
+			if outputEmpty && hasContent {
+				outputArr := []byte(`[]`)
+				if accReasoningBuf.Len() > 0 {
+					item, _ := sjson.SetBytes([]byte(`{"type":"reasoning","summary":[{"type":"summary_text","text":""}]}`), "summary.0.text", accReasoningBuf.String())
+					outputArr, _ = sjson.SetRawBytes(outputArr, "-1", item)
+				}
+				if accTextBuf.Len() > 0 {
+					item, _ := sjson.SetBytes([]byte(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":""}]}`), "content.0.text", accTextBuf.String())
+					outputArr, _ = sjson.SetRawBytes(outputArr, "-1", item)
+				}
+				for i := range accFuncCalls {
+					item := []byte(`{"type":"function_call","call_id":"","name":"","arguments":""}`)
+					item, _ = sjson.SetBytes(item, "call_id", accFuncCalls[i].callID)
+					item, _ = sjson.SetBytes(item, "name", accFuncCalls[i].name)
+					item, _ = sjson.SetBytes(item, "arguments", accFuncCalls[i].args.String())
+					outputArr, _ = sjson.SetRawBytes(outputArr, "-1", item)
+				}
+				payload, _ = sjson.SetRawBytes(payload, "response.output", outputArr)
+			}
+
 			var param any
 			out := sdktranslator.TranslateNonStream(ctx, to, from, req.Model, originalPayload, body, payload, &param)
 			resp = cliproxyexecutor.Response{Payload: out}

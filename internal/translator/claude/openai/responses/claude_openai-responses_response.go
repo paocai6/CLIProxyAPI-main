@@ -21,6 +21,8 @@ type claudeToResponsesState struct {
 	CurrentFCID  string
 	InTextBlock  bool
 	InFuncBlock  bool
+	InThinkingBlock       bool // tracks whether current block is thinking/redacted_thinking
+	InRedactedThinkingBlk bool // true when current block is redacted_thinking (no delta content)
 	FuncArgsBuf  map[int]*strings.Builder // index -> args
 	// function call bookkeeping for output aggregation
 	FuncNames   map[int]string // index -> function name
@@ -84,6 +86,8 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
 			st.ReasoningActive = false
 			st.InTextBlock = false
 			st.InFuncBlock = false
+			st.InThinkingBlock = false
+			st.InRedactedThinkingBlk = false
 			st.CurrentMsgID = ""
 			st.CurrentFCID = ""
 			st.ReasoningItemID = ""
@@ -155,11 +159,16 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
 			// record function metadata for aggregation
 			st.FuncCallIDs[idx] = st.CurrentFCID
 			st.FuncNames[idx] = name
-		} else if typ == "thinking" {
-			// start reasoning item
+		} else if typ == "thinking" || typ == "redacted_thinking" {
+			// start reasoning item (handles both thinking and redacted_thinking blocks)
 			st.ReasoningActive = true
+			st.InThinkingBlock = true
+			st.InRedactedThinkingBlk = typ == "redacted_thinking"
 			st.ReasoningIndex = idx
-			st.ReasoningBuf.Reset()
+			// Append separator for interleaved thinking instead of resetting
+			if st.ReasoningBuf.Len() > 0 {
+				st.ReasoningBuf.WriteString("\n")
+			}
 			st.ReasoningItemID = fmt.Sprintf("rs_%s_%d", st.ResponseID, idx)
 			item := []byte(`{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"reasoning","status":"in_progress","summary":[]}}`)
 			item, _ = sjson.SetBytes(item, "sequence_number", nextSeq())
@@ -255,7 +264,7 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
 			itemDone, _ = sjson.SetBytes(itemDone, "item.name", st.FuncNames[idx])
 			out = append(out, emitEvent("response.output_item.done", itemDone))
 			st.InFuncBlock = false
-		} else if st.ReasoningActive {
+		} else if st.InThinkingBlock {
 			full := st.ReasoningBuf.String()
 			textDone := []byte(`{"type":"response.reasoning_summary_text.done","sequence_number":0,"item_id":"","output_index":0,"summary_index":0,"text":""}`)
 			textDone, _ = sjson.SetBytes(textDone, "sequence_number", nextSeq())
@@ -269,7 +278,8 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
 			partDone, _ = sjson.SetBytes(partDone, "output_index", st.ReasoningIndex)
 			partDone, _ = sjson.SetBytes(partDone, "part.text", full)
 			out = append(out, emitEvent("response.reasoning_summary_part.done", partDone))
-			st.ReasoningActive = false
+			st.InThinkingBlock = false
+			st.InRedactedThinkingBlk = false
 			st.ReasoningPartAdded = false
 		}
 	case "message_delta":
@@ -514,8 +524,12 @@ func ConvertClaudeResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 					toolCalls[idx].id = currentFCID
 					toolCalls[idx].name = name
 				}
-			case "thinking":
+			case "thinking", "redacted_thinking":
 				reasoningActive = true
+				// Append separator for interleaved thinking instead of resetting
+				if reasoningBuf.Len() > 0 {
+					reasoningBuf.WriteString("\n")
+				}
 				reasoningItemID = fmt.Sprintf("rs_%s_%d", responseID, idx)
 			}
 
